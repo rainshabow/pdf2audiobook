@@ -30,5 +30,6 @@ data/
 .DS_Store
 Thumbs.db
 
-# SDD/scratch.superpowers/
 
+# SDD/scratch
+.superpowers/
