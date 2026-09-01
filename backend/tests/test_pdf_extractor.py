@@ -73,14 +73,26 @@ def test_blocks_to_markdown_skips_empty():
 
 # ---------- 页眉/页脚/页码噪音 ----------
 
-def test_is_noise_marks_digits_and_separators():
-    assert pe._is_noise("123")
-    assert pe._is_noise("— 42 —")
-    assert pe._is_noise("- - -")
+def test_is_noise_marks_dot_leaders_only():
+    # 纯点线（目录点线）是噪音；数字/分隔线交给页边距机制处理
     assert pe._is_noise(". . . . . .")
+    assert pe._is_noise(".")
+    assert not pe._is_noise("123")
+    assert not pe._is_noise("2026")
+    assert not pe._is_noise("— 42 —")
+    assert not pe._is_noise("- - -")
     assert not pe._is_noise("第一章 开始")
-    assert not pe._is_noise("H. Roitman—智能体AI 漫游指南：从基础到系统")
     assert not pe._is_noise("1.2.3")
+
+
+def test_margin_noise_scoped_to_margin_band():
+    # 页边距带内的数字/分隔线行是噪音（页脚页码）
+    assert pe._margin_noise("2026", 20.0, 841.89)
+    assert pe._margin_noise("10", 807.0, 841.89)
+    # 正文中的纯数字行不是噪音
+    assert not pe._margin_noise("2026", 300.0, 841.89)
+    # 页边距带内的普通文本行不是噪音（运行页眉交给重复行/页边距机制）
+    assert not pe._margin_noise("H. Roitman—智能体AI 漫游指南：从基础到系统", 21.9, 841.89)
 
 
 def test_strip_toc_dot_leader():
@@ -88,7 +100,8 @@ def test_strip_toc_dot_leader():
     assert pe._clean_line("1.1LLM 工作原理：直觉概览. . . . . . . . . . 39") == "1.1LLM 工作原理：直觉概览"
     assert pe._clean_line("这是正文，没有点线。") == "这是正文，没有点线。"
     assert pe._clean_line(". . . . . .") == ""
-    assert pe._clean_line("25") == ""
+    # 正文纯数字行保留（由页边距机制负责页码过滤）
+    assert pe._clean_line("25") == "25"
 
 
 def test_in_margin_bands():
@@ -195,3 +208,18 @@ def test_extract_blocks_table_block_no_duplication(monkeypatch):
     # 与表格 bbox 相交的文本块被跳过（不重复）；表格外文本保留
     assert not any("h1" in b.text for b in text_blocks)
     assert any("这是表格外的正文" in b.text for b in text_blocks)
+
+
+@pytest.mark.parametrize("rows", [[], [[]]])
+def test_extract_blocks_degenerate_table_does_not_suppress_text(monkeypatch, rows):
+    # 空表格不产出表格块，也不应屏蔽其 bbox 内的文本
+    table_bbox = (100.0, 100.0, 300.0, 200.0)
+    page = _FakePage(
+        dict_blocks=[_text_block((105.0, 105.0, 150.0, 120.0), "表格重叠文本")],
+        tables=[_FakeTable(rows, table_bbox)],
+    )
+    fake_doc = _FakeDoc([page])
+    monkeypatch.setattr(pe.fitz, "open", lambda path: fake_doc)
+    blocks = extract_blocks(Path("fake.pdf"), 1, 1)
+    assert not any(b.kind == "table" for b in blocks)
+    assert any("表格重叠文本" in b.text for b in blocks)

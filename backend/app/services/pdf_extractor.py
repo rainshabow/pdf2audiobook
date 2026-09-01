@@ -80,6 +80,8 @@ def extract_blocks(pdf_path: Path, page_start: int, page_end: int) -> list[Extra
                     y0 = line.get("bbox", (0.0, 0.0, 0.0, 0.0))[1]
                     if (text, round(y0, 1)) in running_lines:
                         continue  # 跨页重复的相同行（运行页眉/页脚）
+                    if _margin_noise(text, y0, page_height):
+                        continue  # 页边距带内的数字/分隔线（页脚页码等）
                     line_texts.append(text)
                 if not line_texts:
                     continue
@@ -133,7 +135,7 @@ def _collect_running_lines(doc, page_start: int, page_end: int) -> set[tuple[str
                 if not text:
                     continue
                 y0 = line.get("bbox", (0.0, 0.0, 0.0, 0.0))[1]
-                if not _in_margin_y(y0, page_height):
+                if _margin_noise(text, y0, page_height) or not _in_margin_y(y0, page_height):
                     continue
                 occ.setdefault((text, round(y0, 1)), set()).add(pno)
     return {key for key, pages in occ.items() if len(pages) >= 2}
@@ -148,9 +150,10 @@ def _extract_tables(page, pno: int, blocks: list[ExtractedBlock]) -> list[tuple[
         return regions
     for table in tables.tables:
         md = _table_to_markdown(table.extract())
-        if md:
-            blocks.append(ExtractedBlock(page=pno, kind="table", text=md,
-                                         font_size=0.0, bold=False))
+        if not md:
+            continue  # 空表格：不产出表格块，也不屏蔽其 bbox 内的文本
+        blocks.append(ExtractedBlock(page=pno, kind="table", text=md,
+                                     font_size=0.0, bold=False))
         regions.append(tuple(table.bbox))
     return regions
 
@@ -175,6 +178,11 @@ def _in_margin_y(y0: float, page_height: float) -> bool:
     return y0 < _TOP_MARGIN or y0 > page_height - _BOTTOM_MARGIN
 
 
+def _margin_noise(text: str, y0: float, page_height: float) -> bool:
+    """页边距带内的数字/分隔线行（如页脚页码）视为噪音；正文中的纯数字行保留。"""
+    return _in_margin_y(y0, page_height) and re.fullmatch(r"[\d\s\-—|]+", text) is not None
+
+
 def _intersects_any(bbox, regions: list[tuple[float, float, float, float]]) -> bool:
     if not regions:
         return False
@@ -195,12 +203,9 @@ def _clean_line(text: str) -> str:
 
 
 def _is_noise(text: str) -> bool:
-    # 页眉/页脚/页码特征：纯数字、短横线/分隔线、纯点线（目录点线）
-    if re.fullmatch(r"[\d\s\-—|]+", text):
-        return True
-    if re.fullmatch(r"[.\s]+", text):
-        return True
-    return False
+    # 纯点线（目录点线）。数字/分隔线过滤限定到页边距带（见 _margin_noise），
+    # 正文中的纯数字行（如年份 "2026"）不再被丢弃。
+    return re.fullmatch(r"[.\s]+", text) is not None
 
 
 def _classify(text: str, size: float, bold: bool) -> str:
