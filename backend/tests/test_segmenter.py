@@ -148,3 +148,26 @@ def test_number_chapters_handles_merged_title():
     chapters = [{"id": "ch-001+ch-002", "title": "A + B", "level": 1}]
     out = segmenter.number_chapters(chapters)
     assert out[0]["title"] == "1. A + B"
+
+
+def test_number_chapters_uses_printed_page_title_match():
+    chapters = [{"id": "ch-007-9", "title": "LLM 智能体训练", "level": 2,
+                 "page_start": 220, "page_end": 247, "anchor_page": 220}]
+    printed = [{"number": "12", "title": "LLM 智能体训练", "page": 220}]
+    out = segmenter.number_chapters(chapters, printed)
+    assert out[0]["title"] == "12 LLM 智能体训练"
+
+
+def test_number_chapters_title_only_match_does_not_override_numbered():
+    chapters = [{"id": "ch-006-1", "title": "LLM 架构与优化方法", "level": 2,
+                 "page_start": 38, "page_end": 106, "anchor_page": 39}]
+    printed = [{"number": "1", "title": "LLM 架构与优化方法", "page": 999}]
+    out = segmenter.number_chapters(chapters, printed)
+    assert out[0]["title"] == "1 LLM 架构与优化方法"
+
+
+def test_number_chapters_keeps_numbered_without_print_match():
+    chapters = [{"id": "ch-006-2", "title": "2.2 面向 LLM 的系统基础", "level": 2,
+                 "page_start": 107, "anchor_page": 107}]
+    out = segmenter.number_chapters(chapters, [])
+    assert out[0]["title"] == "2.2 面向 LLM 的系统基础"

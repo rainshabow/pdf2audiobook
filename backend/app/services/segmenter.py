@@ -8,13 +8,14 @@ _CHAPTER_PREFIX_RE = re.compile(r"^(第[一二三四五六七八九十百千0-9]
 
 _ALREADY_NUMBERED_RE = re.compile(
     r"^(\d+(\.\d+)*[\s、．.]|第[一二三四五六七八九十百千0-9]+[章节部篇]|"
-    r"[一二三四五六七八九十百千]+[、．.\s]|[IVXLCDM]+[\s、．.])"
+    r"[一二三四五六七八九十百千]+[、．.\s]|"
+    r"(?=[IVXLCDM])M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})[\s、．.])"
 )
 
 _SUB_ID_RE = re.compile(r"^ch-\d{3}([+]ch-\d{3})*-\d+$")
 
 
-def segment_from_toc(toc: list[dict]) -> list[dict]:
+def segment_from_toc(toc: list[dict], page_count: int | None = None) -> list[dict]:
     """以顶层章节为基本单元；顶层之间自动补页范围。"""
     if not toc:
         return []
@@ -22,7 +23,7 @@ def segment_from_toc(toc: list[dict]) -> list[dict]:
     top = [e for e in toc if e["level"] == top_level]
     chapters: list[dict] = []
     for i, entry in enumerate(top):
-        page_end = (top[i + 1]["page"] - 1) if i + 1 < len(top) else 10**6
+        page_end = (top[i + 1]["page"] - 1) if i + 1 < len(top) else (page_count or 10**6)
         chapters.append({
             "id": _chapter_id(i + 1),
             "title": entry["title"].strip(),
@@ -95,6 +96,7 @@ def split_oversize(chapters: list[dict], toc: list[dict], char_counts: dict[str,
                 "page_start": page_start,
                 "page_end": page_end,
                 "char_count": 0,
+                "anchor_page": entry["page"],  # 标题锚点页（用于与印刷目录编号对齐）
             })
     return out
 
@@ -103,7 +105,7 @@ def build_candidates(pdf_path: Path, meta: dict) -> list[dict]:
     """TOC 优先；无 TOC 时用字号检测兜底（返回单一大章节）。"""
     toc = pdf_extractor.extract_toc(pdf_path)
     if toc:
-        return segment_from_toc(toc)
+        return segment_from_toc(toc, page_count=meta["page_count"])
     blocks = pdf_extractor.extract_blocks(pdf_path, 1, meta["page_count"])
     heads = detect_headings(blocks)
     if not heads:
@@ -118,28 +120,58 @@ def build_candidates(pdf_path: Path, meta: dict) -> list[dict]:
 
 
 
-def number_chapters(chapters: list[dict]) -> list[dict]:
+def number_chapters(chapters: list[dict], printed_toc: list[dict] | None = None) -> list[dict]:
     """为章节标题补充序号/章节号（就地修改 title）。
 
     - 顶层章节：按顺序补 `N. ` 前缀；标题已含编号（`1. `、`1.1 `、`第N章/节/部/篇`、
       `一、`、罗马数字等）则保留原编号。
     - 子章节（id 含 `-`，来自超长章节拆分）：补 `父序号.子序号 ` 前缀。
     """
+    printed_by_page_title: dict[tuple[int, str], str] = {}
+    printed_by_title: dict[str, str] = {}
+    for e in printed_toc or []:
+        tkey = (e.get("title") or "").replace(" ", "").replace("\u3000", "")
+        if not tkey:
+            continue
+        num = e.get("number")
+        pg = e.get("page")
+        if pg is not None and num and (pg, tkey) not in printed_by_page_title:
+            printed_by_page_title[(pg, tkey)] = num
+        if num and tkey not in printed_by_title:
+            printed_by_title[tkey] = num
+
+    def norm(s: str) -> str:
+        return s.replace(" ", "").replace("\u3000", "")
+
     top_no = 0
     for ch in chapters:
         title = ch.get("title", "").strip()
         cid = str(ch.get("id", ""))
+        is_sub = bool(_SUB_ID_RE.match(cid))
+        if not is_sub:
+            top_no += 1  # 顶层章节计数与是否已编号无关
+        anchor = int(ch.get("anchor_page", ch.get("page_start", 0)) or 0)
+        nkey = norm(title)
+        # 页码+标题双重匹配：印刷目录权威，可覆盖已编号标题
+        printed_no = printed_by_page_title.get((anchor, nkey))
+        if not printed_no:
+            printed_no = printed_by_title.get(nkey)
+            if printed_no and _ALREADY_NUMBERED_RE.match(title):
+                printed_no = None  # 仅标题匹配时不覆盖已有编号
+        if printed_no:
+            ch["title"] = f"{printed_no} {title}"
+            continue
+        if title and _ALREADY_NUMBERED_RE.match(title):
+            continue
         # 子章节 id 形如 ch-001-1 / ch-001+ch-002-1（父 id 合法 + '-数字' 结尾）
-        if _SUB_ID_RE.match(cid):
+        if is_sub:
             sub = cid.rsplit("-", 1)[1]
             sub_no = int(sub) if sub.isdigit() else 0
-            parent_no = top_no  # 当前位置之前已见到的顶层章节数 = 父章节序号
-            prefix = f"{parent_no}.{sub_no}"
-            if title and not _ALREADY_NUMBERED_RE.match(title):
+            prefix = f"{top_no}.{sub_no}"  # top_no 此时已是父章节序号
+            if title:
                 ch["title"] = f"{prefix} {title}"
         else:
-            top_no += 1
-            if title and not _ALREADY_NUMBERED_RE.match(title):
+            if title:
                 ch["title"] = f"{top_no}. {title}"
     return chapters
 

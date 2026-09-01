@@ -132,8 +132,11 @@ class JobManager:
         # 超长章节按 TOC 二级标题拆分（拆分后按新范围重新提取计数）
         chapters = segmenter.split_oversize(chapters, meta["toc"], counts,
                                             rs.chapter_high_chars)
-        # 标题补序号/章节号（顶层 N.，子章节 父.子）
-        chapters = segmenter.number_chapters(chapters)
+        # 末章页尾钳制到实际页数（避免 10**6 占位）；标题优先用印刷目录编号
+        for ch in chapters:
+            ch["page_end"] = min(ch["page_end"], meta["page_count"])
+        printed_toc = pdf_extractor.extract_printed_toc(pdf_path)
+        chapters = segmenter.number_chapters(chapters, printed_toc)
         for ch in chapters:
             blocks = pdf_extractor.extract_blocks(pdf_path, ch["page_start"], ch["page_end"])
             md = pdf_extractor.blocks_to_markdown(blocks)

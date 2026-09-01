@@ -223,3 +223,15 @@ def test_extract_blocks_degenerate_table_does_not_suppress_text(monkeypatch, row
     blocks = extract_blocks(Path("fake.pdf"), 1, 1)
     assert not any(b.kind == "table" for b in blocks)
     assert any("表格重叠文本" in b.text for b in blocks)
+
+
+@pytest.mark.skipif(not SAMPLE.exists(), reason="示例 PDF 未提供")
+def test_extract_printed_toc_sample():
+    from app.services.pdf_extractor import extract_printed_toc
+    entries = extract_printed_toc(SAMPLE)
+    assert len(entries) > 500
+    hit = next((e for e in entries
+                if e["title"] == "LLM 架构与优化方法"), None)
+    assert hit is not None
+    assert hit["number"] == "1"
+    assert hit["page"] == 39

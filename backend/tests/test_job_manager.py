@@ -313,5 +313,7 @@ async def test_parse_job_adds_sequence_numbers_to_titles(data_dir):
         chapters = store.load_json(bdir / "chapters.json", {})["chapters"]
         titles = [c["title"] for c in chapters]
         assert titles == ["1. 开头", "2. 正文"]
+        # 末章页尾必须钳制到实际页数，而非 10**6 占位
+        assert chapters[-1]["page_end"] == 2
     finally:
         await jm.shutdown()

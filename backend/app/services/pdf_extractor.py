@@ -38,6 +38,61 @@ def extract_meta(pdf_path: Path) -> dict:
         doc.close()
 
 
+def extract_printed_toc(pdf_path: Path, max_pages: int = 60) -> list[dict]:
+    """从目录页提取印刷条目编号与页码（尽力而为，用于与目录显示对齐）。
+
+    返回 [{"number": str | None, "title": str, "page": int | None}, ...]；
+    number 如 "1"、"1.1"、"I"。目录页的编号/标题/点线/页码常分行显示。
+    """
+    import fitz as _fitz
+    entries: list[dict] = []
+    doc = _fitz.open(str(pdf_path))
+    try:
+        for pno in range(1, min(max_pages, doc.page_count) + 1):
+            lines = [ln.strip() for ln in doc[pno - 1].get_text().splitlines() if ln.strip()]
+            pending: str | None = None
+            for i, line in enumerate(lines):
+                if (re.fullmatch(r"\d+(\.\d+)*", line)
+                        or re.fullmatch(r"(?=[IVXLCDM])M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})", line)
+                        or re.fullmatch(r"[一二三四五六七八九十百千]+", line)):
+                    pending = line
+                    continue
+                has_dots = bool(re.search(r"\.\s*\.", line))
+                next_has_dots = bool(i + 1 < len(lines) and re.search(r"\.\s*\.", lines[i + 1]))
+                # 部/章级条目常无点线：标题行后一行是纯页码
+                next_is_page = bool(i + 1 < len(lines) and re.fullmatch(r"\d{1,4}", lines[i + 1]))
+                if not (has_dots or next_has_dots or next_is_page):
+                    continue
+                title = re.sub(r"(?:\s*\.\s*){2,}.*$", "", line).strip()
+                if not title or len(title) < 2 or re.match(r"^[A-Za-z]\.\s", title):
+                    continue  # 跳过页眉/页码等噪音
+                leading = re.match(r"^(\d+(\.\d+)*)\s*", title)
+                number = leading.group(1) if leading else pending
+                if leading:
+                    title = title[leading.end():].strip()
+                else:
+                    m = re.match(
+                        r"^((?=[IVXLCDM])M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})"
+                        r"|[一二三四五六七八九十百千]+)\s+", title)
+                    if m:
+                        number = number or m.group(1)
+                        title = title[m.end():].strip()
+                # 向后最多 3 行找页码（跳过点线行）
+                page = None
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    if re.fullmatch(r"\d{1,4}", lines[j]):
+                        page = int(lines[j])
+                        break
+                    if not re.search(r"\.\s*\.", lines[j]):
+                        break
+                if title:
+                    entries.append({"number": number, "title": title, "page": page})
+                pending = None
+    finally:
+        doc.close()
+    return entries
+
+
 def extract_toc(pdf_path: Path) -> list[dict]:
     doc = fitz.open(str(pdf_path))
     try:
