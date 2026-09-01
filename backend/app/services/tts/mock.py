@@ -24,6 +24,12 @@ class MockTTSAdapter(TTSAdapter):
         data = _sine_wav(duration)
         return AudioResult(data=data, duration=duration, format="wav")
 
+    async def synthesize_clone(self, text: str, *, ref_audio: bytes,
+                               ref_text: str | None = None,
+                               language: str | None = None) -> AudioResult:
+        # 测试引擎：克隆与普通合成等价
+        return await self.synthesize(text)
+
 
 def _sine_wav(duration: float) -> bytes:
     n = int(_SAMPLE_RATE * duration)

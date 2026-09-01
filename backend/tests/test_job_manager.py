@@ -11,6 +11,7 @@ from app import store
 from app.config import RuntimeSettings, SettingsStore
 from app.services import audio, job_manager
 from app.services.tts.base import AudioResult, TTSAdapter
+from app.services.tts.mock import MockTTSAdapter
 
 
 class _BlockingTTS(TTSAdapter):
@@ -119,6 +120,10 @@ async def test_parse_job_builds_chapters(data_dir):
 @pytest.mark.asyncio
 async def test_synthesize_job_writes_audio_and_subtitles(data_dir):
     _make_book(data_dir, "b2")
+    # 两段加长文本，确保不被合并成一段
+    ch = store.chapter_dir(data_dir, "b2", "ch-001")
+    (ch / "speech.md").write_text(
+        "第一句。" + "长" * 300 + "\n\n第二句。" + "长" * 300, encoding="utf-8")
     jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
     jm.start_worker()
     try:
@@ -153,6 +158,9 @@ async def test_cancel_pending_job(data_dir):
 @pytest.mark.asyncio
 async def test_rebuild_drops_stale_parts(data_dir):
     _make_book(data_dir, "b4")
+    ch0 = store.chapter_dir(data_dir, "b4", "ch-001")
+    (ch0 / "speech.md").write_text(
+        "第一句。" + "长" * 200 + "\n\n第二句。" + "长" * 200, encoding="utf-8")
     jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
     jm.start_worker()
     try:
@@ -344,7 +352,7 @@ async def test_rewrite_single_chapter_preserves_others(data_dir):
 
     jm = job_manager.JobManager(
         data_dir, SettingsStore(data_dir),
-        rewriter_factory=lambda rs, s: _FakeRewriter(),  # type: ignore[arg-type]
+        rewriter_factory=lambda rs, s, concurrency=20: _FakeRewriter(),  # type: ignore[arg-type]
     )
     jm.start_worker()
     try:
@@ -387,3 +395,88 @@ async def test_synthesize_single_chapter_preserves_others(data_dir):
         assert by_id["ch-002"]["status"] == "pending"
     finally:
         await jm.shutdown()
+
+
+class _RecordingBatchTTS(MockTTSAdapter):
+    """记录批量调用次数的 mock 引擎。"""
+
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = 0
+        self.clone_calls = 0
+
+    async def synthesize_batch(self, texts, *, voice=None, language=None, instruct=None):
+        self.batch_calls += 1
+        return [await self.synthesize(t, voice=voice, language=language, instruct=instruct)
+                for t in texts]
+
+    async def synthesize_clone_batch(self, texts, *, ref_audio, ref_text=None, language=None):
+        self.clone_calls += 1
+        return [await self.synthesize(t) for t in texts]
+
+
+@pytest.mark.asyncio
+async def test_synthesize_uses_batches(data_dir):
+    _make_book(data_dir, "b30")
+    ch = store.chapter_dir(data_dir, "b30", "ch-001")
+    (ch / "speech.md").write_text(
+        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(5)), encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_batch_size = 2
+    ss.save(rs)
+
+    adapter = _RecordingBatchTTS()
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b30")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        # 5 句 / 批 2 → 3 次批量调用
+        assert adapter.batch_calls == 3
+        assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_clone_mode_uses_clone_batch(data_dir):
+    _make_book(data_dir, "b31")
+    ch = store.chapter_dir(data_dir, "b31", "ch-001")
+    (ch / "speech.md").write_text("克隆第一句。\n\n克隆第二句。", encoding="utf-8")
+    ref = data_dir / "clone_ref_audio.wav"
+    ref.write_bytes(b"RIFF-fake-wav")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_mode = "clone"
+    rs.tts_clone_ref_audio = "clone_ref_audio.wav"
+    ss.save(rs)
+
+    adapter = _RecordingBatchTTS()
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b31")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        assert adapter.clone_calls >= 1
+        assert adapter.batch_calls == 0
+        assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rewrite_concurrency_stored_in_snapshot(data_dir):
+    _make_book(data_dir, "b32", with_speech=False)
+    bdir = store.book_dir(data_dir, "b32")
+    (bdir / "chapters" / "ch-001" / "source.md").write_text("表格：\n|A|B|\n|1|2|", encoding="utf-8")
+    jm = job_manager.JobManager(
+        data_dir, SettingsStore(data_dir),
+        rewriter_factory=lambda rs, s, concurrency=20: _FakeRewriter(),  # type: ignore[arg-type]
+    )
+    jid = jm.start("rewrite", "b32", "ch-001", concurrency=7)
+    snap = jm.get_job(jid)["settings_snapshot"]
+    import json as _json
+    assert _json.loads(snap)["rewrite_concurrency"] == 7

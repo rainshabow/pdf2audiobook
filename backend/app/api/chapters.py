@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from app import store
@@ -73,7 +73,8 @@ async def synthesize_chapter(request: Request, book_id: str, chapter_id: str):
 
 
 @router.post("/{chapter_id}/rewrite", response_model=JobInfo)
-async def rewrite_chapter(request: Request, book_id: str, chapter_id: str):
+async def rewrite_chapter(request: Request, book_id: str, chapter_id: str,
+                          concurrency: int = Query(20, ge=1)):
     data_dir = _data_dir(request)
     book_id = _validate_id(book_id)
     chapter_id = _validate_id(chapter_id)
@@ -84,7 +85,7 @@ async def rewrite_chapter(request: Request, book_id: str, chapter_id: str):
     if not any(c["id"] == chapter_id for c in chapters):
         raise HTTPException(404, "章节不存在")
     jm = request.app.state.job_manager
-    jid = jm.start("rewrite", book_id, chapter_id)
+    jid = jm.start("rewrite", book_id, chapter_id, concurrency=concurrency)
     return JobInfo(**jm.get_job(jid))
 
 

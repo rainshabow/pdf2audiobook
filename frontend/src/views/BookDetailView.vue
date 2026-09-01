@@ -11,6 +11,7 @@ const router = useRouter();
 const books = useBooksStore();
 const busy = ref(false);
 const error = ref("");
+const rewriteConcurrency = ref(20);
 
 onMounted(async () => {
   await books.loadBook(route.params.bookId as string);
@@ -32,7 +33,10 @@ async function run(type: "parse" | "rewrite" | "synthesize") {
 
 async function startAndPoll(type: "parse" | "rewrite" | "synthesize") {
   const api = await import("../api/client");
-  const job = await api.startJob(route.params.bookId as string, type);
+  const job = await api.startJob(
+    route.params.bookId as string, type,
+    type === "rewrite" ? rewriteConcurrency.value : undefined,
+  );
   await waitForJob(job.id);
 }
 
@@ -62,6 +66,9 @@ function open(ch: ChapterInfo) {
     <p>共 {{ books.detail.page_count }} 页，{{ books.detail.chapters.length }} 章</p>
     <div class="actions">
       <button :disabled="busy" @click="run('parse')">① 解析章节</button>
+      <label class="conc">改写并发
+        <input type="number" v-model.number="rewriteConcurrency" min="1" max="100" />
+      </label>
       <button :disabled="busy" @click="run('rewrite')">② 全部改写</button>
       <button :disabled="busy" @click="run('synthesize')">③ 全部合成</button>
       <span v-if="error" class="err">{{ error }}</span>
@@ -71,6 +78,8 @@ function open(ch: ChapterInfo) {
 </template>
 
 <style scoped>
-.actions { display: flex; gap: 12px; margin-bottom: 16px; }
+.actions { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+.conc { font-size: 13px; color: #555; }
+.conc input { width: 60px; margin-left: 4px; }
 .err { color: #c00; }
 </style>

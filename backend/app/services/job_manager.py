@@ -18,7 +18,7 @@ ProgressCb = Callable[[float], Awaitable[None]]
 class JobManager:
     def __init__(self, data_dir: Path, settings_store: SettingsStore,
                  tts_factory: Callable[[RuntimeSettings, Settings], TTSAdapter] | None = None,
-                 rewriter_factory: Callable[[RuntimeSettings, Settings], rewriter.Rewriter] | None = None,
+                 rewriter_factory: Callable[[RuntimeSettings, Settings, int], rewriter.Rewriter] | None = None,
                  settings: Settings | None = None):
         self._data_dir = data_dir
         self._settings_store = settings_store
@@ -55,11 +55,14 @@ class JobManager:
             pass
         self._worker_task = None
 
-    def start(self, job_type: JobType, book_id: str, chapter_id: str | None = None) -> str:
+    def start(self, job_type: JobType, book_id: str, chapter_id: str | None = None,
+              concurrency: int | None = None) -> str:
         jid = store.new_book_id()
         rs = self._settings_store.load()
+        snap = _rs_to_dict(rs)
+        snap["rewrite_concurrency"] = concurrency or rs.rewrite_concurrency
         self._db.create_job(jid, book_id, chapter_id, job_type,
-                            json.dumps(_rs_to_dict(rs), ensure_ascii=False))
+                            json.dumps(snap, ensure_ascii=False))
         self._queue.put_nowait((jid, job_type, book_id, chapter_id))
         return jid
 
@@ -156,7 +159,13 @@ class JobManager:
     async def _run_rewrite(self, book_id: str, chapter_id: str | None = None) -> None:
         chapters = self._chapters(book_id, chapter_id)
         rs = self._settings_store.load()
-        rw = self._rewriter_factory(rs, self._settings)
+        job = self._db.get_job(self._current_job_id or "") or {}
+        try:
+            snap = json.loads(job.get("settings_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        concurrency = int(snap.get("rewrite_concurrency") or rs.rewrite_concurrency)
+        rw = self._rewriter_factory(rs, self._settings, concurrency)
         for i, ch in enumerate(chapters):
             async def on_progress(p: float) -> None:
                 overall = (i + p) / len(chapters)
@@ -199,24 +208,56 @@ class JobManager:
             raise ValueError("本章无内容可合成")
         parts_dir = ch_dir / "parts"
         parts_dir.mkdir(parents=True, exist_ok=True)
-        segments: list[dict] = []
-        cursor = 0.0
+        # 预扫描：区分可复用分片与缺失分片
+        items: list[dict] = []
         for idx, seg_text in enumerate(parts):
-            await self._maybe_cancel()
             h = audio.text_hash(seg_text)
             part_path = parts_dir / f"{idx:04d}_{h}.wav"
             if part_path.exists():
-                duration = audio.wav_duration(part_path.read_bytes())
+                items.append({"idx": idx, "text": seg_text, "hash": h, "path": part_path,
+                              "duration": audio.wav_duration(part_path.read_bytes())})
             else:
-                res = await adapter.synthesize(seg_text, voice=rs.tts_speaker,
-                                               speed=1.0, instruct=rs.tts_instruct)
-                part_path.write_bytes(res.data)
-                duration = res.duration
-            segments.append({"index": idx + 1, "text": seg_text, "hash": h,
+                items.append({"idx": idx, "text": seg_text, "hash": h, "path": part_path,
+                              "duration": None})
+        missing = [(i, it) for i, it in enumerate(items) if it["duration"] is None]
+        batch_size = max(1, rs.tts_batch_size)
+        ref_bytes: bytes | None = None
+        if rs.tts_mode == "clone" and rs.tts_clone_ref_audio:
+            ref_path = self._data_dir / rs.tts_clone_ref_audio
+            if not ref_path.exists():
+                raise FileNotFoundError(f"克隆参考音频不存在: {ref_path}")
+            ref_bytes = ref_path.read_bytes()
+        done_count = len(items) - len(missing)
+        for b in range(0, len(missing), batch_size):
+            await self._maybe_cancel()
+            group = missing[b:b + batch_size]
+            texts = [it["text"] for _, it in group]
+            if ref_bytes is not None:
+                results = await adapter.synthesize_clone_batch(
+                    texts, ref_audio=ref_bytes, ref_text=rs.tts_clone_ref_text)
+            else:
+                results = await adapter.synthesize_batch(
+                    texts, voice=rs.tts_speaker, instruct=rs.tts_instruct)
+            if len(results) != len(group):
+                raise RuntimeError(f"引擎返回音频数 {len(results)} != 请求数 {len(group)}")
+            for (_, it), res in zip(group, results):
+                it["path"].write_bytes(res.data)
+                it["duration"] = res.duration
+            done_count += len(group)
+            self._db.update_job(self._current_job_id or "",
+                                progress=(ch_idx + done_count / len(items)) / total)
+        if not missing:
+            self._db.update_job(self._current_job_id or "",
+                                progress=(ch_idx + 1) / total)
+        segments: list[dict] = []
+        cursor = 0.0
+        for it in items:
+            duration = it["duration"]
+            if duration is None:
+                raise RuntimeError(f"分片缺失: {it['path']}")
+            segments.append({"index": it["idx"] + 1, "text": it["text"], "hash": it["hash"],
                              "start": round(cursor, 3), "end": round(cursor + duration, 3)})
             cursor += duration
-            self._db.update_job(self._current_job_id or "",
-                                progress=(ch_idx + (idx + 1) / len(parts)) / total)
         # 只拼接当前 segments 引用的分片，避免改写 speech.md 后陈旧 parts 混入 audio.wav
         part_bytes = [(parts_dir / f"{s['index'] - 1:04d}_{s['hash']}.wav").read_bytes()
                       for s in segments]
@@ -287,8 +328,10 @@ def _default_tts_factory(rs: RuntimeSettings, settings: Settings) -> TTSAdapter:
     return MockTTSAdapter()
 
 
-def _default_rewriter_factory(rs: RuntimeSettings, settings: Settings) -> rewriter.Rewriter:
+def _default_rewriter_factory(rs: RuntimeSettings, settings: Settings,
+                              concurrency: int = 20) -> rewriter.Rewriter:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(base_url=settings.openai_base_url,
                          api_key=settings.openai_api_key)
-    return rewriter.Rewriter(client, rs.llm_model, settings.data_dir)
+    return rewriter.Rewriter(client, rs.llm_model, settings.data_dir,
+                             concurrency=concurrency)

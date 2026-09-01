@@ -21,6 +21,9 @@ export interface SettingsView {
   tts_engine: string; tts_model: string; tts_speaker: string | null;
   tts_speed: number; tts_instruct: string | null; llm_model: string;
   chapter_low_chars: number; chapter_high_chars: number;
+  tts_mode: string; tts_clone_ref_audio: string | null;
+  tts_clone_ref_text: string | null; tts_batch_size: number;
+  rewrite_concurrency: number;
 }
 
 const api = axios.create({ baseURL: "/api" });
@@ -41,8 +44,11 @@ export async function deleteBook(id: string): Promise<void> {
 }
 export async function startJob(
   bookId: string, type: "parse" | "rewrite" | "synthesize",
+  concurrency?: number,
 ): Promise<JobInfo> {
-  return (await api.post(`/books/${bookId}/${type}`)).data;
+  const params = concurrency !== undefined && type === "rewrite"
+    ? { concurrency } : undefined;
+  return (await api.post(`/books/${bookId}/${type}`, null, { params })).data;
 }
 export async function getSpeechMd(bookId: string, ch: string): Promise<string> {
   return (await api.get(`/books/${bookId}/chapters/${ch}/speech.md`)).data;
@@ -57,8 +63,11 @@ export async function saveSpeechMd(bookId: string, ch: string, text: string): Pr
 export async function rebuildChapter(bookId: string, ch: string): Promise<JobInfo> {
   return (await api.post(`/books/${bookId}/chapters/${ch}/rebuild`)).data;
 }
-export async function rewriteChapter(bookId: string, ch: string): Promise<JobInfo> {
-  return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`)).data;
+export async function rewriteChapter(
+  bookId: string, ch: string, concurrency?: number,
+): Promise<JobInfo> {
+  const params = concurrency !== undefined ? { concurrency } : undefined;
+  return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`, null, { params })).data;
 }
 export async function synthesizeChapter(bookId: string, ch: string): Promise<JobInfo> {
   return (await api.post(`/books/${bookId}/chapters/${ch}/synthesize`)).data;
@@ -78,6 +87,11 @@ export async function getSettings(): Promise<SettingsView> {
 }
 export async function saveSettings(s: SettingsView): Promise<SettingsView> {
   return (await api.put("/settings", s)).data;
+}
+export async function uploadCloneAudio(file: File): Promise<{ path: string }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return (await api.post("/settings/clone-audio", fd)).data;
 }
 export async function listTTSModels(): Promise<Array<{ name: string; type: string }>> {
   return (await api.get("/tts/models")).data;

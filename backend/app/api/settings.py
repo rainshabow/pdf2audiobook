@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile
 
 from app.config import RuntimeSettings
 from app.models import SettingsView, TTSModelInfo, TTSSpeakerInfo
@@ -21,6 +21,15 @@ async def put_settings(request: Request, view: SettingsView):
     rs = RuntimeSettings(**view.model_dump())
     request.app.state.settings_store.save(rs)
     return SettingsView(**rs.__dict__)
+
+
+@router.post("/settings/clone-audio")
+async def upload_clone_audio(request: Request, file: UploadFile):
+    data_dir = request.app.state.data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    dest = data_dir / "clone_ref_audio.wav"
+    dest.write_bytes(await file.read())
+    return {"path": "clone_ref_audio.wav"}
 
 
 @router.get("/tts/models", response_model=list[TTSModelInfo])

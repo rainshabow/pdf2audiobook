@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from openai import AsyncOpenAI
 
 from app.services import rewriter
@@ -77,7 +78,8 @@ async def test_rewrite_chapter_resumes_from_checkpoint(data_dir):
     from app import store
     ch_dir = store.chapter_dir(data_dir, "b1", "ch-002")
     ch_dir.mkdir(parents=True)
-    src = "甲。" * 1300 + "\n\n" + "乙。" * 1300  # 两段超长，必然切成多段且内容互异
+    src = ("表格：\n|A|B|\n1|2\n" + "甲。" * 700 + "\n\n"
+           + "列表：\n- 项目一\n- 项目二\n" + "乙。" * 700)  # 两个结构化段，各成 section（合计 >2500）
     sections = rewriter.Rewriter.split_sections(src)
     assert len(sections) >= 2
     h0 = hashlib.sha256(sections[0].encode("utf-8")).hexdigest()[:16]
@@ -131,7 +133,7 @@ async def test_rewrite_chapter_empty_llm_result_raises_and_not_cached(data_dir):
     from app import store
     ch_dir = store.chapter_dir(data_dir, "b1", "ch-003")
     ch_dir.mkdir(parents=True)
-    (ch_dir / "source.md").write_text("内容。\n", encoding="utf-8")
+    (ch_dir / "source.md").write_text("内容。\n|A|B|\n1|2\n", encoding="utf-8")
 
     class FakeCompletions:
         async def create(self, **kwargs):
@@ -181,8 +183,10 @@ async def test_rewrite_chapter_resume_with_missing_cache_regenerates(data_dir):
     from app import store
     ch_dir = store.chapter_dir(data_dir, "b1", "ch-005")
     ch_dir.mkdir(parents=True)
-    src = "甲。" * 1300 + "\n\n" + "乙。" * 1300
+    src = ("表格：\n|A|B|\n1|2\n" + "甲。" * 700 + "\n\n"
+           + "列表：\n- 项目一\n- 项目二\n" + "乙。" * 700)
     sections = rewriter.Rewriter.split_sections(src)
+    assert len(sections) == 2
     h0 = hashlib.sha256(sections[0].encode("utf-8")).hexdigest()[:16]
     store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [h0]})  # 缓存文件缺失
     (ch_dir / "source.md").write_text(src, encoding="utf-8")
@@ -213,3 +217,99 @@ async def test_rewrite_chapter_resume_with_missing_cache_regenerates(data_dir):
     text = (ch_dir / "speech.md").read_text(encoding="utf-8")
     assert text.count("重写结果") == len(sections)
 
+
+def test_needs_rewrite_classifies_structure():
+    rw = rewriter.Rewriter(None, "m", Path("."))  # type: ignore[arg-type]
+    assert rw.needs_rewrite("这是一段纯文本。\n第二行还是纯文本。") is False
+    assert rw.needs_rewrite("表格：\n|A|B|\n|1|2|") is True
+    assert rw.needs_rewrite("列表：\n- 第一项\n- 第二项") is True
+    assert rw.needs_rewrite("图注：（图注位置：图 1）") is True
+    assert rw.needs_rewrite("```python\nprint(1)\n```") is True
+    assert rw.needs_rewrite("公式：$f(x)=x^2$") is True
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skips_plain_text_sections(data_dir):
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-plain")
+    ch_dir.mkdir(parents=True)
+    (ch_dir / "source.md").write_text(
+        "这是纯文本第一段。\n\n这是纯文本第二段。\n\n表格：\n|A|B|\n|1|2|",
+        encoding="utf-8")
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = []
+
+        async def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return type("R", (), {"choices": [type("C", (), {"message": type(
+                "M", (), {"content": "改写后的表格"})()})]})()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    fake = FakeClient()
+    rw = rewriter.Rewriter(fake, "m", data_dir)  # type: ignore[arg-type]
+
+    async def noop(p):
+        pass
+
+    await rw.rewrite_chapter("b1", {"id": "ch-plain"}, noop)
+    assert len(fake.chat.completions.calls) == 1  # 只有表格段调用 LLM
+    text = (ch_dir / "speech.md").read_text(encoding="utf-8")
+    assert "这是纯文本第一段。" in text
+    assert "这是纯文本第二段。" in text
+    assert "改写后的表格" in text
+
+
+@pytest.mark.asyncio
+async def test_rewrite_concurrency_bounds_parallel_calls(data_dir):
+    import asyncio
+
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-conc")
+    ch_dir.mkdir(parents=True)
+    # 8 个表格段，全部需要 LLM
+    src = "\n\n".join(f"表格段{i}：\n|A{i}|B{i}|\n" + "长" * 2600 for i in range(8))
+    (ch_dir / "source.md").write_text(src, encoding="utf-8")
+
+    active = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = []
+
+        async def create(self, **kwargs):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.05)
+            async with lock:
+                active -= 1
+            self.calls.append(kwargs)
+            return type("R", (), {"choices": [type("C", (), {"message": type(
+                "M", (), {"content": "改写结果"})()})]})()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    fake = FakeClient()
+    rw = rewriter.Rewriter(fake, "m", data_dir, concurrency=3)  # type: ignore[arg-type]
+
+    async def noop(p):
+        pass
+
+    await rw.rewrite_chapter("b1", {"id": "ch-conc"}, noop)
+    assert len(fake.chat.completions.calls) == 8
+    assert peak <= 3
+    assert peak >= 2  # 确实发生过并发

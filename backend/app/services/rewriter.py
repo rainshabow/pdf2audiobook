@@ -1,4 +1,6 @@
+import asyncio
 import hashlib
+import re
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -21,24 +23,49 @@ ProgressCb = Callable[[float], Awaitable[None]]
 
 
 class Rewriter:
-    def __init__(self, client: AsyncOpenAI, model: str, data_dir: Path):
+    def __init__(self, client: AsyncOpenAI, model: str, data_dir: Path,
+                 concurrency: int = 20):
         self._client = client
         self._model = model
         self._data_dir = data_dir
+        self._concurrency = max(1, concurrency)
+
+    @staticmethod
+    def needs_rewrite(text: str) -> bool:
+        """纯文本段落无需改写，直接透传；含表格/列表/图注/代码/公式等结构才调用 LLM。"""
+        for line in text.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if "|" in s:  # 表格
+                return True
+            if re.match(r"^([-*+]|\d+[.、)])\s", s):  # 列表
+                return True
+            if "（图注位置" in s or "[图片]" in s:  # 图注/图片
+                return True
+            if s.startswith("```") or re.match(r"^(def |class |import |const |function |#include)", s):  # 代码
+                return True
+            if re.search(r"\$|\\frac|_\{|\^\{|\\alpha|\\beta|\\sum|\\int|\\sqrt", s):  # 公式
+                return True
+        return False
 
     @staticmethod
     def split_sections(text: str, max_chars: int = 2500) -> list[str]:
         parts = [p.strip() for p in text.split("\n\n") if p.strip()]
         sections: list[str] = []
         buf = ""
+        buf_plain: bool | None = None
         for part in parts:
+            plain = not Rewriter.needs_rewrite(part)
             if not buf:
                 buf = part
-            elif len(buf) + len(part) + 2 <= max_chars:
+                buf_plain = plain
+            elif buf_plain == plain and len(buf) + len(part) + 2 <= max_chars:
                 buf += "\n\n" + part
             else:
                 sections.append(buf)
                 buf = part
+                buf_plain = plain
         if buf:
             sections.append(buf)
         # 单段超长时按句切
@@ -78,23 +105,43 @@ class Rewriter:
         checkpoint_path = ch_dir / "rewrite_checkpoint.json"
         cp = store.load_json(checkpoint_path, {"done": []})
         done: set[str] = set(cp.get("done", []))
-        outputs: list[str] = []
         total = len(sections)
+        results: list[str | None] = [None] * total
+        lock = asyncio.Lock()
+        completed = 0
         await on_progress(0.0)
-        for i, sec in enumerate(sections):
+
+        async def process(i: int, sec: str) -> None:
+            nonlocal completed
             h = _hash(sec)
             cached = None if h not in done else _try_load_done(ch_dir, h)
             if cached is not None:
-                outputs.append(cached)
-                await on_progress((i + 1) / total)
-                continue
-            done.discard(h)  # 缓存缺失/为空视为未完成，重新生成
-            result = await self._call_llm(sec)
-            _save_done(ch_dir, h, result)
-            done.add(h)
-            outputs.append(result)
-            store.save_json(checkpoint_path, {"done": sorted(done)})
-            await on_progress((i + 1) / total)
+                results[i] = cached
+            else:
+                done.discard(h)  # 缓存缺失/为空视为未完成
+                if self.needs_rewrite(sec):
+                    result = await self._call_llm(sec)
+                else:
+                    result = sec  # 纯文本直接透传，不调用 LLM
+                async with lock:
+                    _save_done(ch_dir, h, result)
+                    done.add(h)
+                    store.save_json(checkpoint_path, {"done": sorted(done)})
+                results[i] = result
+            async with lock:
+                completed += 1
+                await on_progress(completed / total)
+
+        sem = asyncio.Semaphore(self._concurrency)
+
+        async def guarded(i: int, sec: str) -> None:
+            async with sem:
+                await process(i, sec)
+
+        tasks = [asyncio.create_task(guarded(i, sec)) for i, sec in enumerate(sections)]
+        if tasks:
+            await asyncio.gather(*tasks)
+        outputs = [r for r in results if r is not None]
         (ch_dir / "speech.md").write_text(_join(outputs), encoding="utf-8")
         if total == 0:
             await on_progress(1.0)

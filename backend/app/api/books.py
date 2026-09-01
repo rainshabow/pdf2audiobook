@@ -2,7 +2,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 
 from app import store
 from app.models import Book, BookDetail, JobInfo
@@ -107,8 +107,10 @@ async def start_parse(request: Request, book_id: str):
 
 
 @router.post("/{book_id}/rewrite", response_model=JobInfo)
-async def start_rewrite(request: Request, book_id: str):
-    return await _start(request, "rewrite", book_id, require_parsed=True)
+async def start_rewrite(request: Request, book_id: str,
+                        concurrency: int = Query(20, ge=1)):
+    return await _start(request, "rewrite", book_id, require_parsed=True,
+                        concurrency=concurrency)
 
 
 @router.post("/{book_id}/synthesize", response_model=JobInfo)
@@ -117,7 +119,7 @@ async def start_synthesize(request: Request, book_id: str):
 
 
 async def _start(request: Request, job_type: str, book_id: str, *,
-                   require_parsed: bool = False):
+                   require_parsed: bool = False, concurrency: int | None = None):
     data_dir, jm = _ctx(request)
     book_id = _validate_id(book_id)
     bdir = store.book_dir(data_dir, book_id)
@@ -125,5 +127,5 @@ async def _start(request: Request, job_type: str, book_id: str, *,
         raise HTTPException(404, "书籍不存在")
     if require_parsed and not (bdir / "chapters.json").exists():
         raise HTTPException(400, "请先解析章节")
-    jid = jm.start(job_type, book_id)
+    jid = jm.start(job_type, book_id, concurrency=concurrency)
     return JobInfo(**jm.get_job(jid))

@@ -80,9 +80,22 @@ def build_subtitles(segments: list[dict]) -> tuple[str, str]:
 def split_speech_text(text: str, max_chars: int = 500) -> list[str]:
     blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
     out: list[str] = []
+    # 合并相邻短段，减少 TTS 请求数（一次提交较多句子）
+    buf = ""
     for block in blocks:
+        if not buf:
+            buf = block
+        elif len(buf) + len(block) + 2 <= max_chars:
+            buf += "\n\n" + block
+        else:
+            out.append(buf)
+            buf = block
+    if buf:
+        out.append(buf)
+    result: list[str] = []
+    for block in out:
         if len(block) <= max_chars:
-            out.append(block)
+            result.append(block)
             continue
         # 超长块按句切
         sentences = re.split(r"(?<=[。！？；])", block)
@@ -93,10 +106,10 @@ def split_speech_text(text: str, max_chars: int = 500) -> list[str]:
             if len(cur) + len(s) <= max_chars:
                 cur += s
             else:
-                _append_capped(out, cur, max_chars)
+                _append_capped(result, cur, max_chars)
                 cur = s
-        _append_capped(out, cur, max_chars)
-    return out
+        _append_capped(result, cur, max_chars)
+    return result
 
 
 def _append_capped(out: list[str], text: str, max_chars: int) -> None:

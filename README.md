@@ -37,6 +37,14 @@
 1. 按 https://github.com/licyk/qwen-tts-webui 安装并启动（API-only）：`python launch.py --nowebui --server-name 0.0.0.0 --server-port 7860`
 2. 前端「设置」将引擎切到 `qwen_webui`，首次合成会自动下载模型
 
+## 效率与音色设置（前端「设置」页）
+- 改写并发上限：默认 20，可在书籍页/章节页开始改写时调整
+- 纯文本段落自动跳过 LLM 改写，直接透传（表格/列表/图注/代码/公式才改写）
+- 合成批处理：分句合并 + 一次请求提交多句（`segment_gen`），减少请求开销
+- 基础语速：默认 1.25 倍（固化进音频，字幕同步换算）
+- 合成模式：CustomVoice（选声音）或 Voice Clone（上传参考音频克隆音色，首次使用会自动下载 Base 模型）
+- 语气一致性：默认朗读指示为“平稳、一致、中性稳定”，配合批量合成减少分句间情绪波动
+
 ## 测试
 - 后端：`cd backend && python -m pytest`
 - 前端：`cd frontend && npm run test`

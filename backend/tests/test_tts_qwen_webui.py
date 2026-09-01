@@ -116,3 +116,75 @@ async def test_synthesize_none_instruct_sent_as_empty_string():
     assert "speaker" in captured["body"] and captured["body"]["speaker"] is None
     assert "language" in captured["body"] and captured["body"]["language"] is None
     await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_batch_uses_segment_gen():
+    import base64
+    import io
+    import math
+    import struct
+    import wave
+
+    def wav(dur=0.5):
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+            n = int(24000 * dur)
+            w.writeframes(b"".join(struct.pack("<h", int(500 * math.sin(2 * math.pi * 440 * i / 24000))) for i in range(n)))
+        return buf.getvalue()
+
+    captured = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured["body"] = json.loads(request.content)
+        payload = {"audio_files_base64": [base64.b64encode(wav()).decode() for _ in range(2)]}
+        return httpx.Response(200, json=payload)
+
+    adapter = QwenWebUIAdapter("http://127.0.0.1:7860", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    results = await adapter.synthesize_batch(
+        ["第一句。\n第二句。", "第三句。"], voice="serena", instruct="平稳")
+    assert len(results) == 2
+    assert captured["body"]["segment_gen"] is True
+    assert captured["body"]["text"] == "第一句。 第二句。\n第三句。"  # 内部换行替换
+    assert captured["body"]["speaker"] == "serena"
+    await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_clone_batch_posts_voice_clone():
+    import base64
+    import io
+    import math
+    import struct
+    import wave
+
+    def wav(dur=0.5):
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+            n = int(24000 * dur)
+            w.writeframes(b"".join(struct.pack("<h", int(500 * math.sin(2 * math.pi * 440 * i / 24000))) for i in range(n)))
+        return buf.getvalue()
+
+    ref_wav = wav()
+    captured = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured["body"] = json.loads(request.content)
+        payload = {"audio_files_base64": [base64.b64encode(wav()).decode()]}
+        return httpx.Response(200, json=payload)
+
+    adapter = QwenWebUIAdapter("http://127.0.0.1:7860", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    results = await adapter.synthesize_clone_batch(
+        ["克隆测试。"], ref_audio=ref_wav, ref_text="参考文本")
+    assert len(results) == 1
+    assert captured["body"]["model_name"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    assert captured["body"]["segment_gen"] is True
+    assert captured["body"]["ref_audio_base64"] == base64.b64encode(ref_wav).decode()
+    assert captured["body"]["ref_text"] == "参考文本"
+    await adapter._client.aclose()

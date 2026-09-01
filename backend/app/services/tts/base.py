@@ -27,3 +27,22 @@ class TTSAdapter(ABC):
     async def interrupt(self) -> None:
         """取消当前引擎任务；不支持时 no-op。"""
         return None
+
+    async def synthesize_batch(self, texts: list[str], *, voice: str | None = None,
+                               language: str | None = None,
+                               instruct: str | None = None) -> list["AudioResult"]:
+        """批量合成（默认逐句调用 synthesize，引擎可覆盖为一次请求）。"""
+        return [await self.synthesize(t, voice=voice, language=language, instruct=instruct)
+                for t in texts]
+
+    async def synthesize_clone(self, text: str, *, ref_audio: bytes,
+                               ref_text: str | None = None,
+                               language: str | None = None) -> "AudioResult":
+        raise NotImplementedError("当前引擎不支持语音克隆")
+
+    async def synthesize_clone_batch(self, texts: list[str], *, ref_audio: bytes,
+                                      ref_text: str | None = None,
+                                      language: str | None = None) -> list["AudioResult"]:
+        return [await self.synthesize_clone(t, ref_audio=ref_audio, ref_text=ref_text,
+                                            language=language)
+                for t in texts]

@@ -43,11 +43,16 @@ class SettingsView(BaseModel):
     tts_engine: str = "mock"
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     tts_speaker: str | None = None
-    tts_speed: float = 1.0
+    tts_speed: float = 1.25
     tts_instruct: str | None = None
-    llm_model: str = "dsv4-flash"
+    llm_model: str = "deepseek-v4-flash"
     chapter_low_chars: int = 5000
     chapter_high_chars: int = 15000
+    tts_mode: str = "custom"
+    tts_clone_ref_audio: str | None = None
+    tts_clone_ref_text: str | None = None
+    tts_batch_size: int = 10
+    rewrite_concurrency: int = 20
 
 
 class TTSModelInfo(BaseModel):

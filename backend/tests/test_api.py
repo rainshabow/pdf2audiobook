@@ -1,4 +1,5 @@
 import io
+import json
 from pathlib import Path
 
 import fitz
@@ -289,7 +290,7 @@ async def test_rewrite_chapter_endpoint(client, tmp_path):
             (ch_dir / "speech.md").write_text("口语化结果", encoding="utf-8")
             await on_progress(1.0)
 
-    client.app.state.job_manager._rewriter_factory = lambda rs, s: _FakeRewriter(tmp_path)
+    client.app.state.job_manager._rewriter_factory = lambda rs, s, concurrency=20: _FakeRewriter(tmp_path)
     r = await client.post(f"/api/books/{book['book_id']}/chapters/{ch}/rewrite")
     assert r.status_code == 200
     job = r.json()
@@ -350,3 +351,52 @@ async def test_synthesize_chapter_endpoint(client, tmp_path):
     # 未知章节 404
     r = await client.post(f"/api/books/{book['book_id']}/chapters/ch-999/synthesize")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rewrite_concurrency_param(client, tmp_path):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+
+    class _FakeRewriter:
+        async def rewrite_chapter(self, book_id, chapter, on_progress):
+            ch_dir = store.chapter_dir(tmp_path, book_id, chapter["id"])
+            ch_dir.mkdir(parents=True, exist_ok=True)
+            (ch_dir / "speech.md").write_text("结果", encoding="utf-8")
+            await on_progress(1.0)
+
+    client.app.state.job_manager._rewriter_factory = lambda rs, s, concurrency=20: _FakeRewriter()
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/{ch}/rewrite?concurrency=5")
+    assert r.status_code == 200
+    job = r.json()
+    assert job["type"] == "rewrite"
+    snap = client.app.state.job_manager.get_job(job["id"])["settings_snapshot"]
+    assert json.loads(snap)["rewrite_concurrency"] == 5
+    await _wait(client, job["id"])
+
+
+@pytest.mark.asyncio
+async def test_upload_clone_audio_and_settings_fields(client, tmp_path):
+    r = await client.post("/api/settings/clone-audio",
+                          files={"file": ("ref.wav", b"RIFF-fake", "audio/wav")})
+    assert r.status_code == 200
+    assert (tmp_path / "clone_ref_audio.wav").exists()
+    r = await client.get("/api/settings")
+    s = r.json()
+    assert s["tts_mode"] == "custom"
+    assert s["rewrite_concurrency"] == 20
+    assert s["tts_batch_size"] == 10
+    r = await client.put("/api/settings", json={
+        **s, "tts_mode": "clone", "tts_clone_ref_audio": "clone_ref_audio.wav",
+        "rewrite_concurrency": 8, "tts_batch_size": 5, "tts_speed": 1.25})
+    assert r.status_code == 200
+    got = (await client.get("/api/settings")).json()
+    assert got["tts_mode"] == "clone"
+    assert got["tts_clone_ref_audio"] == "clone_ref_audio.wav"
+    assert got["rewrite_concurrency"] == 8
+    assert got["tts_batch_size"] == 5

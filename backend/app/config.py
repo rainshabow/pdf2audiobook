@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     tts_api_url: str = "http://127.0.0.1:7860"
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     tts_speaker: str | None = None
-    tts_speed: float = 1.0
-    tts_instruct: str | None = None
+    tts_speed: float = 1.25
+    tts_instruct: str | None = "用平稳、一致的叙述语气朗读，情绪保持中性稳定，前后句语气连贯。"
     backend_host: str = "127.0.0.1"
     backend_port: int = 8000
     data_dir: Path = Path("data")
@@ -41,11 +41,16 @@ class RuntimeSettings:
     tts_engine: str = "mock"
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     tts_speaker: str | None = None
-    tts_speed: float = 1.0
-    tts_instruct: str | None = None
+    tts_speed: float = 1.25
+    tts_instruct: str | None = "用平稳、一致的叙述语气朗读，情绪保持中性稳定，前后句语气连贯。"
     llm_model: str = "deepseek-v4-flash"
     chapter_low_chars: int = 5000
     chapter_high_chars: int = 15000
+    tts_mode: str = "custom"  # custom | clone
+    tts_clone_ref_audio: str | None = None
+    tts_clone_ref_text: str | None = None
+    tts_batch_size: int = 10
+    rewrite_concurrency: int = 20
 
 
 class SettingsStore:
