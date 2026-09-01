@@ -12,6 +12,7 @@ const chapterId = route.params.chapterId as string;
 const md = ref("");
 const saved = ref(false);
 const rebuilding = ref(false);
+const rewriting = ref(false);
 const error = ref("");
 const audioVersion = ref(0);
 
@@ -32,6 +33,21 @@ async function save() {
     setTimeout(() => (saved.value = false), 2000);
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
+  }
+}
+async function rewrite() {
+  rewriting.value = true;
+  error.value = "";
+  try {
+    const job = await api.rewriteChapter(bookId, chapterId);
+    await waitForJob(job.id);
+    md.value = await api.getSpeechMd(bookId, chapterId);
+    saved.value = true;
+    setTimeout(() => (saved.value = false), 2000);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? String(e);
+  } finally {
+    rewriting.value = false;
   }
 }
 async function rebuild() {
@@ -55,6 +71,7 @@ async function rebuild() {
     <ChapterEditor v-model="md" />
     <div class="bar">
       <button @click="save">保存文本</button>
+      <button :disabled="rewriting" @click="rewrite">改写本章</button>
       <button :disabled="rebuilding" @click="rebuild">重建本章音频</button>
       <span v-if="saved" class="ok">已保存</span>
       <span v-if="error" class="err">{{ error }}</span>

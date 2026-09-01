@@ -47,7 +47,7 @@ function open(ch: ChapterInfo) {
     <p>共 {{ books.detail.page_count }} 页，{{ books.detail.chapters.length }} 章</p>
     <div class="actions">
       <button :disabled="busy" @click="run('parse')">① 解析章节</button>
-      <button :disabled="busy" @click="run('rewrite')">② 口语化改写</button>
+      <button :disabled="busy" @click="run('rewrite')">② 全部改写</button>
       <button :disabled="busy" @click="run('synthesize')">③ 合成语音</button>
       <span v-if="error" class="err">{{ error }}</span>
     </div>

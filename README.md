@@ -1,6 +1,6 @@
 # PDF 转语音
 
-把 PDF 书籍转化为可听的有声书：解析章节 → dsv4-flash 口语化改写 → Qwen3-TTS 合成音频与字幕。
+把 PDF 书籍转化为可听的有声书：解析章节 → deepseek-v4-flash 口语化改写 → Qwen3-TTS 合成音频与字幕。
 
 ## 架构
 - 后端：FastAPI（`backend/`），pymupdf 解析、LLM 改写、TTS 适配层、SQLite 任务库
@@ -8,7 +8,7 @@
 - 产物：`data/books/<book_id>/chapters/<chapter_id>/` 下 `speech.md`、`audio.wav`、`chapter.srt`、`chapter.vtt`、`segments.json`、`parts/`
 
 ## 快速开始
-1. `cp .env.example .env`，填入 `OPENAI_API_KEY`（opencode dsv4-flash）；如需统一数据目录，可加 `DATA_DIR=D:\绝对路径\data`（默认是启动目录下的 `data/`）
+1. `cp .env.example .env`，填入 `OPENAI_API_KEY`（opencode deepseek-v4-flash）；如需统一数据目录，可加 `DATA_DIR=D:\绝对路径\data`（默认是启动目录下的 `data/`）
 2. 后端：`cd backend && python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8000`
 3. 前端：`cd frontend && npm install && npm run dev`，浏览器打开 `http://localhost:5173`
 4. 上传 PDF → 解析章节 → 口语化改写 → 合成语音

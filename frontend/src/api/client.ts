@@ -54,6 +54,9 @@ export async function saveSpeechMd(bookId: string, ch: string, text: string): Pr
 export async function rebuildChapter(bookId: string, ch: string): Promise<JobInfo> {
   return (await api.post(`/books/${bookId}/chapters/${ch}/rebuild`)).data;
 }
+export async function rewriteChapter(bookId: string, ch: string): Promise<JobInfo> {
+  return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`)).data;
+}
 export const audioUrl = (bookId: string, ch: string) =>
   `/api/books/${bookId}/chapters/${ch}/audio`;
 export const vttUrl = (bookId: string, ch: string) =>

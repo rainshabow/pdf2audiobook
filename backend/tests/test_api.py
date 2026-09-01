@@ -29,6 +29,7 @@ async def client(tmp_path: Path):
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url="http://test") as c:
+            c.app = app  # 便于测试访问 app.state
             yield c
 
 
@@ -264,3 +265,46 @@ async def test_tts_adapter_closed_after_lists(tmp_path):
             assert (await c.get("/api/tts/models")).status_code == 200
             assert (await c.get("/api/tts/speakers")).status_code == 200
     assert adapter.closed == 2
+
+
+@pytest.mark.asyncio
+async def test_rewrite_chapter_endpoint(client, tmp_path):
+    """按章节改写：返回 rewrite 任务（chapter_id 正确），可单章完成。"""
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+
+    class _FakeRewriter:
+        def __init__(self, data_dir):
+            self.data_dir = data_dir
+
+        async def rewrite_chapter(self, book_id, chapter, on_progress):
+            await on_progress(0.0)
+            ch_dir = store.chapter_dir(self.data_dir, book_id, chapter["id"])
+            ch_dir.mkdir(parents=True, exist_ok=True)
+            (ch_dir / "speech.md").write_text("口语化结果", encoding="utf-8")
+            await on_progress(1.0)
+
+    client.app.state.job_manager._rewriter_factory = lambda rs, s: _FakeRewriter(tmp_path)
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/{ch}/rewrite")
+    assert r.status_code == 200
+    job = r.json()
+    assert job["type"] == "rewrite"
+    assert job["chapter_id"] == ch
+    await _wait(client, job["id"])
+    assert (tmp_path / "books" / book["book_id"] / "chapters" / ch / "speech.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_rewrite_unknown_chapter_404(client):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/ch-999/rewrite")
+    assert r.status_code == 404

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     """从 .env 读取的敏感/固定配置。"""
     openai_base_url: str = "https://opencode.ai/zen/go/v1"
     openai_api_key: str = ""
-    llm_model: str = "dsv4-flash"
+    llm_model: str = "deepseek-v4-flash"
     tts_engine: str = "mock"
     tts_api_url: str = "http://127.0.0.1:7860"
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
@@ -43,7 +43,7 @@ class RuntimeSettings:
     tts_speaker: str | None = None
     tts_speed: float = 1.0
     tts_instruct: str | None = None
-    llm_model: str = "dsv4-flash"
+    llm_model: str = "deepseek-v4-flash"
     chapter_low_chars: int = 5000
     chapter_high_chars: int = 15000
 
