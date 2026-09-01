@@ -58,7 +58,8 @@ def split_oversize(chapters: list[dict], toc: list[dict], char_counts: dict[str,
     """把超过 high 上限的章节按 TOC 二级标题拆分为子章节（递归一次）。
 
     无 level-2 条目的超长章节保持原样；子章节 id 用 `父id-序号`（如 ch-001-1），
-    page_start/page_end 按二级条目页计算，char_count 由调用方按新范围重新提取。
+    首个二级标题前的章首/引言页归属第一个子章节（page_start 取父章节起始页），
+    char_count 由调用方按新范围重新提取。
     """
     out: list[dict] = []
     for ch in chapters:
@@ -78,11 +79,13 @@ def split_oversize(chapters: list[dict], toc: list[dict], char_counts: dict[str,
         for i, entry in enumerate(sub_titles):
             page_end = (sub_titles[i + 1]["page"] - 1
                         if i + 1 < len(sub_titles) else ch["page_end"])
+            # 首个二级标题前的章首/引言页归属第一个子章节，避免内容丢失
+            page_start = ch["page_start"] if i == 0 else entry["page"]
             out.append({
                 "id": f"{ch['id']}-{i + 1}",
                 "title": entry["title"].strip(),
                 "level": 2,
-                "page_start": entry["page"],
+                "page_start": page_start,
                 "page_end": page_end,
                 "char_count": 0,
             })

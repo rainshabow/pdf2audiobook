@@ -63,7 +63,7 @@ def test_split_oversize_splits_by_level2():
     assert out[0]["id"] == "ch-001-1"
     assert out[0]["title"] == "一、小标题A"
     assert out[0]["level"] == 2
-    assert out[0]["page_start"] == 10
+    assert out[0]["page_start"] == 1  # 首个子章节从父章节起始页开始，含引言页
     assert out[0]["page_end"] == 49
     assert out[1]["id"] == "ch-001-2"
     assert out[1]["title"] == "二、小标题B"

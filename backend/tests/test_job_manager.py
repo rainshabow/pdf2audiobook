@@ -63,7 +63,7 @@ def _make_pdf_with_level2(path: Path) -> None:
     doc = fitz.open()
     for text in ["第一章 开始", "1.1 子节一", "1.2 子节二", "第二章 结束"]:
         page = doc.new_page()
-        page.insert_text((72, 72), text, fontsize=18)
+        page.insert_text((72, 72), text, fontsize=18, fontname='china-s')
     doc.set_toc([
         [1, "第一章 开始", 1],
         [2, "1.1 子节一", 2],
@@ -260,8 +260,10 @@ async def test_parse_job_splits_oversize_by_level2(data_dir):
         assert "ch-001-1" in ids
         assert "ch-001-2" in ids
         sub = next(c for c in chapters if c["id"] == "ch-001-1")
-        assert sub["page_start"] == 2
+        assert sub["page_start"] == 1  # 含第一章引言页
         assert sub["page_end"] == 2
+        intro = (bdir / "chapters" / "ch-001-1" / "source.md").read_text(encoding="utf-8")
+        assert "第一章 开始" in intro
         assert (bdir / "chapters" / "ch-001-1" / "source.md").exists()
         assert (bdir / "chapters" / "ch-001-2" / "source.md").exists()
     finally:
