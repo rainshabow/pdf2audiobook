@@ -19,9 +19,9 @@ def concat_wavs(parts: list[bytes], tmp_dir: Path) -> bytes:
     """把多个 WAV 统一为 24kHz/mono/16bit 后拼接（用 ffmpeg）。"""
     if not parts:
         raise ValueError("parts 为空")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     if len(parts) == 1:
         return _normalize(parts[0], tmp_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
     norm_paths = []
     for i, p in enumerate(parts):
         path = tmp_dir / f"part_{i:04d}.wav"
@@ -60,14 +60,16 @@ def speed_wav(data: bytes, factor: float, tmp_dir: Path) -> bytes:
 
 
 def build_subtitles(segments: list[dict]) -> tuple[str, str]:
-    srt_lines = []
-    vtt_lines = ["WEBVTT", ""]
+    srt_cues = []
+    vtt_cues = []
     for seg in segments:
         idx = seg["index"]
         text = seg["text"]
-        srt_lines.append(f"{idx}\n{_fmt_srt(seg['start'])} --> {_fmt_srt(seg['end'])}\n{text}\n")
-        vtt_lines.append(f"{idx}\n{_fmt_vtt(seg['start'])} --> {_fmt_vtt(seg['end'])}\n{text}\n")
-    return "\n\n".join(srt_lines).strip(), "\n\n".join(vtt_lines).strip()
+        srt_cues.append(f"{idx}\n{_fmt_srt(seg['start'])} --> {_fmt_srt(seg['end'])}\n{text}")
+        vtt_cues.append(f"{idx}\n{_fmt_vtt(seg['start'])} --> {_fmt_vtt(seg['end'])}\n{text}")
+    srt = "\n\n".join(srt_cues)
+    vtt = "WEBVTT\n\n" + "\n\n".join(vtt_cues)
+    return srt, vtt
 
 
 def split_speech_text(text: str, max_chars: int = 500) -> list[str]:
@@ -81,18 +83,25 @@ def split_speech_text(text: str, max_chars: int = 500) -> list[str]:
         sentences = re.split(r"(?<=[。！？；])", block)
         cur = ""
         for s in sentences:
-            s = s.strip()
-            if not s:
+            if not s.strip():
                 continue
             if len(cur) + len(s) <= max_chars:
                 cur += s
             else:
-                if cur:
-                    out.append(cur)
+                _append_capped(out, cur, max_chars)
                 cur = s
-        if cur:
-            out.append(cur)
+        _append_capped(out, cur, max_chars)
     return out
+
+
+def _append_capped(out: list[str], text: str, max_chars: int) -> None:
+    """追加分句结果；整段仍超长（句边界不足）时按 max_chars 硬切，字符完整保留。"""
+    if not text:
+        return
+    if len(text) <= max_chars:
+        out.append(text)
+    else:
+        out.extend(text[i:i + max_chars] for i in range(0, len(text), max_chars))
 
 
 def text_hash(text: str) -> str:
