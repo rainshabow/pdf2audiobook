@@ -24,36 +24,45 @@ class JobManager:
         self._settings_store = settings_store
         self._settings = settings or Settings()
         self._db = store.JobDB(data_dir / "jobs.db")
-        self._queue: asyncio.Queue[tuple[str, JobType, str, str | None]] = asyncio.Queue()
+        # 双通道：llm（parse/rewrite，LLM/CPU 资源）与 tts（synthesize/rebuild，GPU 资源）
+        self._queue_llm: asyncio.Queue[tuple[str, JobType, str, str | None]] = asyncio.Queue()
+        self._queue_tts: asyncio.Queue[tuple[str, JobType, str, str | None]] = asyncio.Queue()
         self._cancel_flags: set[str] = set()
-        self._worker_task: asyncio.Task | None = None
-        self._current_job_id: str | None = None
-        self._current_adapter: TTSAdapter | None = None
+        self._worker_tasks: list[asyncio.Task] = []
+        self._current_job_id: dict[str, str | None] = {"llm": None, "tts": None}
+        self._current_adapter: dict[str, TTSAdapter | None] = {"llm": None, "tts": None}
         self._tts_factory = tts_factory or _default_tts_factory
         self._rewriter_factory = rewriter_factory or _default_rewriter_factory
 
+    @staticmethod
+    def _lane(job_type: JobType) -> str:
+        return "tts" if job_type in ("synthesize", "rebuild") else "llm"
+
     def start_worker(self) -> None:
-        if self._worker_task is None:
-            self._worker_task = asyncio.create_task(self._worker())
+        if not self._worker_tasks:
+            self._worker_tasks = [
+                asyncio.create_task(self._worker("llm", self._queue_llm)),
+                asyncio.create_task(self._worker("tts", self._queue_tts)),
+            ]
 
     async def shutdown(self) -> None:
         """把在途/排队任务置为终态后停止 worker，避免重启后遗留 running/pending 行。"""
-        if self._worker_task is None:
+        if not self._worker_tasks:
             return
-        if self._current_job_id:
-            self._db.update_job(self._current_job_id, status="cancelled")
-        while True:
-            try:
-                jid, *_ = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            self._db.update_job(jid, status="cancelled")
-        self._worker_task.cancel()
-        try:
-            await self._worker_task
-        except asyncio.CancelledError:
-            pass
-        self._worker_task = None
+        for lane, jid in self._current_job_id.items():
+            if jid:
+                self._db.update_job(jid, status="cancelled")
+        for queue in (self._queue_llm, self._queue_tts):
+            while True:
+                try:
+                    jid, *_ = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                self._db.update_job(jid, status="cancelled")
+        for task in self._worker_tasks:
+            task.cancel()
+        await asyncio.gather(*self._worker_tasks, return_exceptions=True)
+        self._worker_tasks = []
 
     def start(self, job_type: JobType, book_id: str, chapter_id: str | None = None,
               concurrency: int | None = None) -> str:
@@ -63,7 +72,8 @@ class JobManager:
         snap["rewrite_concurrency"] = concurrency or rs.rewrite_concurrency
         self._db.create_job(jid, book_id, chapter_id, job_type,
                             json.dumps(snap, ensure_ascii=False))
-        self._queue.put_nowait((jid, job_type, book_id, chapter_id))
+        queue = self._queue_tts if self._lane(job_type) == "tts" else self._queue_llm
+        queue.put_nowait((jid, job_type, book_id, chapter_id))
         return jid
 
     def get_job(self, job_id: str) -> dict | None:
@@ -77,25 +87,28 @@ class JobManager:
         if job is None or job["status"] in ("done", "failed", "cancelled"):
             return  # 不存在或已终态：不加入 flags，也不触发 interrupt
         self._cancel_flags.add(job_id)
-        if self._current_job_id == job_id and self._current_adapter is not None:
+        lane = self._lane(job["type"])
+        if self._current_job_id.get(lane) == job_id and self._current_adapter.get(lane) is not None:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return  # 无运行事件循环时跳过 interrupt
-            loop.create_task(self._current_adapter.interrupt())
+            loop.create_task(self._current_adapter[lane].interrupt())
 
-    async def _worker(self) -> None:
+    async def _worker(self, lane: str,
+                      queue: asyncio.Queue[tuple[str, JobType, str, str | None]]) -> None:
         while True:
-            jid, job_type, book_id, chapter_id = await self._queue.get()
-            self._current_job_id = jid
+            jid, job_type, book_id, chapter_id = await queue.get()
+            self._current_job_id[lane] = jid
+            self._current_adapter[lane] = None
             self._db.update_job(jid, status="running", error=None)
             try:
                 if job_type == "parse":
-                    await self._run_parse(book_id)
+                    await self._run_parse(book_id, jid)
                 elif job_type == "rewrite":
-                    await self._run_rewrite(book_id, chapter_id)
+                    await self._run_rewrite(book_id, chapter_id, jid)
                 elif job_type in ("synthesize", "rebuild"):
-                    await self._run_synthesize(book_id, chapter_id)
+                    await self._run_synthesize(book_id, chapter_id, jid)
                 else:
                     raise ValueError(f"未知任务类型: {job_type}")
                 if jid in self._cancel_flags:
@@ -109,11 +122,11 @@ class JobManager:
                                     error=f"{type(exc).__name__}: {exc}")
             finally:
                 self._cancel_flags.discard(jid)
-                self._current_job_id = None
-                self._current_adapter = None
+                self._current_job_id[lane] = None
+                self._current_adapter[lane] = None
 
     # ---------- parse ----------
-    async def _run_parse(self, book_id: str) -> None:
+    async def _run_parse(self, book_id: str, job_id: str | None = None) -> None:
         bdir = store.book_dir(self._data_dir, book_id)
         pdf_path = bdir / "source.pdf"
         meta = pdf_extractor.extract_meta(pdf_path)
@@ -129,7 +142,7 @@ class JobManager:
         for ch in candidates:
             blocks = pdf_extractor.extract_blocks(pdf_path, ch["page_start"], ch["page_end"])
             counts[ch["id"]] = len(pdf_extractor.blocks_to_markdown(blocks))
-            await self._maybe_cancel()
+            await self._maybe_cancel(job_id)
         chapters = segmenter.adaptive_merge(candidates, counts,
                                             rs.chapter_low_chars, rs.chapter_high_chars)
         # 超长章节按 TOC 二级标题拆分（拆分后按新范围重新提取计数）
@@ -156,10 +169,11 @@ class JobManager:
                 shutil.rmtree(old)
 
     # ---------- rewrite ----------
-    async def _run_rewrite(self, book_id: str, chapter_id: str | None = None) -> None:
+    async def _run_rewrite(self, book_id: str, chapter_id: str | None = None,
+                              job_id: str | None = None) -> None:
         chapters = self._chapters(book_id, chapter_id)
         rs = self._settings_store.load()
-        job = self._db.get_job(self._current_job_id or "") or {}
+        job = self._db.get_job(job_id or "") or {}
         try:
             snap = json.loads(job.get("settings_snapshot") or "{}")
         except Exception:
@@ -169,8 +183,8 @@ class JobManager:
         for i, ch in enumerate(chapters):
             async def on_progress(p: float) -> None:
                 overall = (i + p) / len(chapters)
-                await self._maybe_cancel()
-                self._db.update_job(self._current_job_id or "", progress=overall)
+                await self._maybe_cancel(job_id)
+                self._db.update_job(job_id or "", progress=overall)
             await rw.rewrite_chapter(book_id, ch, on_progress)
             ch_dir = store.chapter_dir(self._data_dir, book_id, ch["id"])
             ch["status"] = "rewritten"
@@ -178,18 +192,19 @@ class JobManager:
             self._save_chapters(book_id, chapters)
 
     # ---------- synthesize / rebuild ----------
-    async def _run_synthesize(self, book_id: str, chapter_id: str | None = None) -> None:
+    async def _run_synthesize(self, book_id: str, chapter_id: str | None = None,
+                                job_id: str | None = None) -> None:
         chapters = self._chapters(book_id, chapter_id)
         rs = self._settings_store.load()
         adapter = self._tts_factory(rs, self._settings)
-        self._current_adapter = adapter
+        self._current_adapter["tts"] = adapter
         try:
             for i, ch in enumerate(chapters):
                 ch_dir = store.chapter_dir(self._data_dir, book_id, ch["id"])
                 speech_path = ch_dir / "speech.md"
                 if not speech_path.exists():
                     raise FileNotFoundError(f"缺少 speech.md: {speech_path}")
-                segments = await self._synthesize_chapter(adapter, ch_dir, speech_path, rs, i, len(chapters))
+                segments = await self._synthesize_chapter(adapter, ch_dir, speech_path, rs, i, len(chapters), job_id)
                 ch["status"] = "synthesized"
                 ch["audio_duration"] = round(sum(s["end"] - s["start"] for s in segments), 3)
                 store.save_json(ch_dir / "status.json", ch)
@@ -201,7 +216,8 @@ class JobManager:
 
     async def _synthesize_chapter(self, adapter: TTSAdapter, ch_dir: Path,
                                   speech_path: Path, rs: RuntimeSettings,
-                                  ch_idx: int, total: int) -> list[dict]:
+                                  ch_idx: int, total: int,
+                                  job_id: str | None = None) -> list[dict]:
         text = speech_path.read_text(encoding="utf-8")
         parts = audio.split_speech_text(text, max_chars=500)
         if not parts:
@@ -229,7 +245,7 @@ class JobManager:
             ref_bytes = ref_path.read_bytes()
         done_count = len(items) - len(missing)
         for b in range(0, len(missing), batch_size):
-            await self._maybe_cancel()
+            await self._maybe_cancel(job_id)
             group = missing[b:b + batch_size]
             texts = [it["text"] for _, it in group]
             if ref_bytes is not None:
@@ -244,10 +260,10 @@ class JobManager:
                 it["path"].write_bytes(res.data)
                 it["duration"] = res.duration
             done_count += len(group)
-            self._db.update_job(self._current_job_id or "",
+            self._db.update_job(job_id or "",
                                 progress=(ch_idx + done_count / len(items)) / total)
         if not missing:
-            self._db.update_job(self._current_job_id or "",
+            self._db.update_job(job_id or "",
                                 progress=(ch_idx + 1) / total)
         segments: list[dict] = []
         cursor = 0.0
@@ -308,9 +324,8 @@ class JobManager:
                 updated.append(c)
         store.save_json(bdir / "chapters.json", {"chapters": updated})
 
-    async def _maybe_cancel(self) -> None:
-        jid = self._current_job_id or ""
-        if jid in self._cancel_flags:
+    async def _maybe_cancel(self, job_id: str | None = None) -> None:
+        if job_id and job_id in self._cancel_flags:
             raise _JobCancelled()
 
 

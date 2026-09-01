@@ -480,3 +480,48 @@ async def test_rewrite_concurrency_stored_in_snapshot(data_dir):
     snap = jm.get_job(jid)["settings_snapshot"]
     import json as _json
     assert _json.loads(snap)["rewrite_concurrency"] == 7
+
+
+@pytest.mark.asyncio
+async def test_rewrite_and_synthesize_run_concurrently(data_dir):
+    """改写（LLM 通道）与合成（TTS 通道）互不阻塞，可并行。"""
+    _make_book(data_dir, "b40", with_speech=True)
+    bdir = store.book_dir(data_dir, "b40")
+    (bdir / "chapters" / "ch-001" / "source.md").write_text("表格：\n|A|B|\n|1|2|", encoding="utf-8")
+    # 第二个书用于合成
+    _make_book(data_dir, "b41", with_speech=True)
+
+    release = asyncio.Event()
+
+    class _BlockingRewriter:
+        async def rewrite_chapter(self, book_id, chapter, on_progress):
+            await release.wait()  # 阻塞改写任务
+            ch_dir = store.chapter_dir(data_dir, book_id, chapter["id"])
+            (ch_dir / "speech.md").write_text("改写完成", encoding="utf-8")
+            await on_progress(1.0)
+
+    jm = job_manager.JobManager(
+        data_dir, SettingsStore(data_dir),
+        rewriter_factory=lambda rs, s, concurrency=20: _BlockingRewriter(),  # type: ignore[arg-type]
+    )
+    jm.start_worker()
+    try:
+        rw_id = jm.start("rewrite", "b40", "ch-001")
+        # 等改写进入阻塞状态
+        for _ in range(50):
+            if jm.get_job(rw_id)["status"] == "running":
+                break
+            await asyncio.sleep(0.05)
+        assert jm.get_job(rw_id)["status"] == "running"
+        # 启动合成（另一本书），应能在改写被阻塞时完成
+        sy_id = jm.start("synthesize", "b41")
+        sy_job = await _wait_done(jm, sy_id)
+        assert sy_job["status"] == "done", sy_job
+        # 改写此时仍在运行（未被合成阻塞/取消）
+        assert jm.get_job(rw_id)["status"] == "running"
+        release.set()
+        rw_job = await _wait_done(jm, rw_id)
+        assert rw_job["status"] == "done", rw_job
+    finally:
+        release.set()
+        await jm.shutdown()
