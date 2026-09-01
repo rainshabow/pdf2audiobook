@@ -8,7 +8,7 @@ const emit = defineEmits<{
 }>();
 
 const statusText: Record<string, string> = {
-  pending: "待改写", rewritten: "待合成", synthesized: "已完成", edited: "已编辑", failed: "失败",
+  pending: "待改写", rewritten: "待合成", synthesized: "已完成", partial: "部分合成", edited: "已编辑", failed: "失败",
 };
 </script>
 
