@@ -250,8 +250,22 @@ class JobManager:
         return chapters
 
     def _save_chapters(self, book_id: str, chapters: list[dict]) -> None:
-        store.save_json(store.book_dir(self._data_dir, book_id) / "chapters.json",
-                        {"chapters": chapters})
+        """按 id 合并回全量章节列表，避免单章任务覆盖丢失其他章节。"""
+        bdir = store.book_dir(self._data_dir, book_id)
+        full = store.load_json(bdir / "chapters.json", {"chapters": []})["chapters"]
+        by_id = {c["id"]: c for c in chapters}
+        seen = set()
+        updated = []
+        for c in full:
+            if c["id"] in by_id:
+                updated.append({**c, **by_id[c["id"]]})
+                seen.add(c["id"])
+            else:
+                updated.append(c)
+        for c in chapters:
+            if c["id"] not in seen:
+                updated.append(c)
+        store.save_json(bdir / "chapters.json", {"chapters": updated})
 
     async def _maybe_cancel(self) -> None:
         jid = self._current_job_id or ""

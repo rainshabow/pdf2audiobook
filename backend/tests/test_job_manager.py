@@ -317,3 +317,73 @@ async def test_parse_job_adds_sequence_numbers_to_titles(data_dir):
         assert chapters[-1]["page_end"] == 2
     finally:
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rewrite_single_chapter_preserves_others(data_dir):
+    """单章改写不得覆盖 chapters.json 中的其他章节。"""
+    _make_book(data_dir, "b20", with_speech=False)
+    # b20 只有 ch-001；构造含两章的 chapters.json
+    bdir = store.book_dir(data_dir, "b20")
+    (bdir / "chapters" / "ch-002").mkdir(parents=True, exist_ok=True)
+    store.save_json(bdir / "chapters.json", {"chapters": [
+        {"id": "ch-001", "title": "第一章", "level": 1, "page_start": 1,
+         "page_end": 3, "char_count": 30, "status": "pending"},
+        {"id": "ch-002", "title": "第二章", "level": 1, "page_start": 4,
+         "page_end": 6, "char_count": 30, "status": "pending"},
+    ]})
+    (bdir / "chapters" / "ch-001" / "source.md").write_text("第一章原文", encoding="utf-8")
+    (bdir / "chapters" / "ch-002" / "source.md").write_text("第二章原文", encoding="utf-8")
+
+    class _FakeRewriter:
+        async def rewrite_chapter(self, book_id, chapter, on_progress):
+            ch_dir = store.chapter_dir(data_dir, book_id, chapter["id"])
+            ch_dir.mkdir(parents=True, exist_ok=True)
+            (ch_dir / "speech.md").write_text("口语化结果", encoding="utf-8")
+            await on_progress(1.0)
+
+    jm = job_manager.JobManager(
+        data_dir, SettingsStore(data_dir),
+        rewriter_factory=lambda rs, s: _FakeRewriter(),  # type: ignore[arg-type]
+    )
+    jm.start_worker()
+    try:
+        jid = jm.start("rewrite", "b20", "ch-001")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        chapters = store.load_json(bdir / "chapters.json", {})["chapters"]
+        assert [c["id"] for c in chapters] == ["ch-001", "ch-002"]
+        by_id = {c["id"]: c for c in chapters}
+        assert by_id["ch-001"]["status"] == "rewritten"
+        assert by_id["ch-002"]["status"] == "pending"
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_single_chapter_preserves_others(data_dir):
+    """单章合成不得覆盖 chapters.json 中的其他章节。"""
+    _make_book(data_dir, "b21", with_speech=False)
+    bdir = store.book_dir(data_dir, "b21")
+    (bdir / "chapters" / "ch-002").mkdir(parents=True, exist_ok=True)
+    store.save_json(bdir / "chapters.json", {"chapters": [
+        {"id": "ch-001", "title": "第一章", "level": 1, "page_start": 1,
+         "page_end": 3, "char_count": 30, "status": "pending"},
+        {"id": "ch-002", "title": "第二章", "level": 1, "page_start": 4,
+         "page_end": 6, "char_count": 30, "status": "pending"},
+    ]})
+    (bdir / "chapters" / "ch-001" / "speech.md").write_text("第一句。\n\n第二句。", encoding="utf-8")
+
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b21", "ch-001")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        chapters = store.load_json(bdir / "chapters.json", {})["chapters"]
+        assert [c["id"] for c in chapters] == ["ch-001", "ch-002"]
+        by_id = {c["id"]: c for c in chapters}
+        assert by_id["ch-001"]["status"] == "synthesized"
+        assert by_id["ch-002"]["status"] == "pending"
+    finally:
+        await jm.shutdown()
