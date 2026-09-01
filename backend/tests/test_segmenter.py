@@ -1,0 +1,50 @@
+from app.services import segmenter
+
+
+def test_segment_from_toc_top_level():
+    toc = [
+        {"level": 1, "title": "I 基础", "page": 38},
+        {"level": 2, "title": "1 LLM 架构与优化方法", "page": 39},
+        {"level": 2, "title": "2 分词", "page": 60},
+        {"level": 1, "title": "II 进阶", "page": 90},
+        {"level": 2, "title": "3 注意力机制", "page": 91},
+    ]
+    chapters = segmenter.segment_from_toc(toc)
+    # 顶层 chapter 为基本单元：I 基础(38-89)、II 进阶(90-末)
+    assert len(chapters) == 2
+    assert chapters[0]["title"] == "I 基础"
+    assert chapters[0]["page_start"] == 38
+    assert chapters[0]["page_end"] == 89
+    assert chapters[1]["page_start"] == 90
+
+
+def test_adaptive_merge_small_adjacent():
+    chapters = [
+        {"id": "c1", "title": "A", "page_start": 1, "page_end": 5},
+        {"id": "c2", "title": "B", "page_start": 6, "page_end": 10},
+        {"id": "c3", "title": "C", "page_start": 11, "page_end": 30},
+    ]
+    counts = {"c1": 1000, "c2": 2000, "c3": 8000}
+    merged = segmenter.adaptive_merge(chapters, counts, low=5000, high=15000)
+    # 三个小节合计 11000 字：贪心合并直到达到下限
+    assert len(merged) == 1
+    assert merged[0]["title"] == "A + B + C"
+    assert merged[0]["char_count"] == 11000
+    assert merged[0]["page_end"] == 30
+
+
+def test_adaptive_merge_no_split_when_under_high():
+    chapters = [{"id": "c1", "title": "A", "page_start": 1, "page_end": 20}]
+    merged = segmenter.adaptive_merge(chapters, {"c1": 12000}, low=5000, high=15000)
+    assert len(merged) == 1
+
+
+def test_detect_headings():
+    from app.services.pdf_extractor import ExtractedBlock
+    blocks = [
+        ExtractedBlock(page=1, kind="heading", text="第1章 开始", font_size=16, bold=True),
+        ExtractedBlock(page=1, kind="text", text="正文", font_size=12, bold=False),
+        ExtractedBlock(page=2, kind="heading", text="1.1 子节", font_size=14, bold=True),
+    ]
+    heads = segmenter.detect_headings(blocks)
+    assert heads == [(1, "第1章 开始"), (2, "1.1 子节")]
