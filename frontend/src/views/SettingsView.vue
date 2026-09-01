@@ -12,17 +12,32 @@ const form = reactive<api.SettingsView>({
 const models = ref<Array<{ name: string; type: string }>>([]);
 const speakers = ref<Array<{ name: string }>>([]);
 const saved = ref(false);
+const listError = ref("");
 
 onMounted(async () => {
   await store.load();
   if (store.settings) Object.assign(form, store.settings);
   await refreshLists();
 });
+async function onEngineChange(e: Event) {
+  const next = (e.target as HTMLSelectElement).value;
+  if (next !== form.tts_engine) {
+    form.tts_engine = next;
+    form.tts_model = "";
+    form.tts_speaker = null;
+  }
+  await refreshLists();
+}
 async function refreshLists() {
   try {
     models.value = await api.listTTSModels();
     speakers.value = await api.listTTSSpeakers();
-  } catch { /* 引擎未启动时忽略 */ }
+    listError.value = "";
+  } catch (e: any) {
+    models.value = [];
+    speakers.value = [];
+    listError.value = "加载模型/声音列表失败: " + (e?.response?.data?.detail ?? String(e));
+  }
 }
 async function save() {
   await store.save({ ...form });
@@ -35,7 +50,7 @@ async function save() {
   <div>
     <h2>设置</h2>
     <label>TTS 引擎
-      <select v-model="form.tts_engine" @change="refreshLists">
+      <select v-model="form.tts_engine" @change="onEngineChange">
         <option value="mock">mock（测试）</option>
         <option value="qwen_webui">qwen_webui（本机 Qwen3-TTS）</option>
       </select>
@@ -64,10 +79,12 @@ async function save() {
     <label>章节字数上限 <input type="number" v-model.number="form.chapter_high_chars" /></label>
     <button @click="save">保存设置</button>
     <span v-if="saved" class="ok">已保存</span>
+    <p v-if="listError" class="err">{{ listError }}</p>
   </div>
 </template>
 
 <style scoped>
 label { display: block; margin-bottom: 10px; }
 .ok { color: #080; margin-left: 8px; }
+.err { color: #c00; }
 </style>

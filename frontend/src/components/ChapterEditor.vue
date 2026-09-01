@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { EditorView, basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { marked } from "marked";
@@ -10,6 +10,13 @@ const emit = defineEmits<{ (e: "update:modelValue", v: string): void }>();
 const host = ref<HTMLElement | null>(null);
 const preview = ref(false);
 const view = shallowRef<EditorView | null>(null);
+
+watch(() => props.modelValue, (v) => {
+  const editor = view.value;
+  if (!editor) return;
+  const cur = editor.state.doc.toString();
+  if (v !== cur) editor.dispatch({ changes: { from: 0, to: cur.length, insert: v } });
+});
 
 onMounted(() => {
   if (!host.value) return;

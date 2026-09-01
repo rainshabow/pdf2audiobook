@@ -12,15 +12,26 @@ const md = ref("");
 const saved = ref(false);
 const rebuilding = ref(false);
 const error = ref("");
+const audioVersion = ref(0);
 
 onMounted(async () => {
-  md.value = await api.getSpeechMd(bookId, chapterId);
+  try {
+    md.value = await api.getSpeechMd(bookId, chapterId);
+  } catch (e: any) {
+    md.value = "";
+    error.value = e?.response?.data?.detail ?? String(e);
+  }
 });
 
 async function save() {
-  await api.saveSpeechMd(bookId, chapterId, md.value);
-  saved.value = true;
-  setTimeout(() => (saved.value = false), 2000);
+  error.value = "";
+  try {
+    await api.saveSpeechMd(bookId, chapterId, md.value);
+    saved.value = true;
+    setTimeout(() => (saved.value = false), 2000);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? String(e);
+  }
 }
 async function rebuild() {
   rebuilding.value = true;
@@ -34,6 +45,7 @@ async function rebuild() {
       if (!cur || cur.status === "done") break;
       if (cur.status === "failed" || cur.status === "cancelled") throw new Error(cur.error ?? cur.status);
     }
+    audioVersion.value++;
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
   } finally {
@@ -52,7 +64,7 @@ async function rebuild() {
       <span v-if="saved" class="ok">已保存</span>
       <span v-if="error" class="err">{{ error }}</span>
     </div>
-    <AudioPlayer :book-id="bookId" :chapter-id="chapterId" />
+    <AudioPlayer :key="audioVersion" :book-id="bookId" :chapter-id="chapterId" />
   </div>
 </template>
 
