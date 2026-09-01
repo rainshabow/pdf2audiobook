@@ -28,6 +28,20 @@ async def get_speech(request: Request, book_id: str, chapter_id: str):
                              media_type="text/markdown; charset=utf-8")
 
 
+@router.get("/{chapter_id}/source.md")
+async def get_source(request: Request, book_id: str, chapter_id: str):
+    data_dir = _data_dir(request)
+    book_id = _validate_id(book_id)
+    chapter_id = _validate_id(chapter_id)
+    if not store.book_dir(data_dir, book_id).exists():
+        raise HTTPException(404, "书籍不存在")
+    path = store.chapter_dir(data_dir, book_id, chapter_id) / "source.md"
+    if not path.exists():
+        raise HTTPException(404, "原始文本不存在，请先解析")
+    return PlainTextResponse(path.read_text(encoding="utf-8"),
+                             media_type="text/markdown; charset=utf-8")
+
+
 @router.put("/{chapter_id}/speech.md")
 async def save_speech(request: Request, book_id: str, chapter_id: str):
     data_dir = _data_dir(request)

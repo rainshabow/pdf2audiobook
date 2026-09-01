@@ -47,6 +47,9 @@ export async function startJob(
 export async function getSpeechMd(bookId: string, ch: string): Promise<string> {
   return (await api.get(`/books/${bookId}/chapters/${ch}/speech.md`)).data;
 }
+export async function getSourceMd(bookId: string, ch: string): Promise<string> {
+  return (await api.get(`/books/${bookId}/chapters/${ch}/source.md`)).data;
+}
 export async function saveSpeechMd(bookId: string, ch: string, text: string): Promise<void> {
   await api.put(`/books/${bookId}/chapters/${ch}/speech.md`, text,
     { headers: { "Content-Type": "text/plain" } });

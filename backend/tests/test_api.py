@@ -13,7 +13,7 @@ from app.main import create_app
 
 def _tiny_pdf_bytes() -> bytes:
     doc = fitz.open()
-    doc.new_page().insert_text((72, 72), "第一章 开始", fontsize=18)
+    doc.new_page().insert_text((72, 72), "第一章 开始", fontsize=18, fontname='china-s')
     doc.set_toc([[1, "第一章 开始", 1]])
     out = io.BytesIO()
     doc.save(out)
@@ -307,4 +307,20 @@ async def test_rewrite_unknown_chapter_404(client):
     jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
     await _wait(client, jid)
     r = await client.post(f"/api/books/{book['book_id']}/chapters/ch-999/rewrite")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_source_md(client, tmp_path):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+    r = await client.get(f"/api/books/{book['book_id']}/chapters/{ch}/source.md")
+    assert r.status_code == 200
+    assert "第一章 开始" in r.text
+    r = await client.get(f"/api/books/{book['book_id']}/chapters/ch-999/source.md")
     assert r.status_code == 404
