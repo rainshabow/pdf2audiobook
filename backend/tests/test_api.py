@@ -102,6 +102,36 @@ async def test_delete_book(client, tmp_path):
     assert not store.book_dir(tmp_path, book["book_id"]).exists()
 
 
+@pytest.mark.asyncio
+async def test_bad_upload_and_missing_resources(client, tmp_path):
+    # 非 PDF 文件名 → 400，且不污染列表
+    r = await client.post("/api/books", files={
+        "file": ("bad.txt", b"not a pdf", "text/plain")})
+    assert r.status_code == 400
+    # 伪造 .pdf（内容非 PDF）→ 400，失败路径清理，不产生孤儿目录
+    r = await client.post("/api/books", files={
+        "file": ("fake.pdf", b"not a pdf", "application/pdf")})
+    assert r.status_code == 400
+    assert (await client.get("/api/books")).json() == []
+    assert list((tmp_path / "books").iterdir()) == []
+    # 正常上传后：不存在章节的 audio / chapter.vtt → 404
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    r = await client.get(f"/api/books/{book['book_id']}/chapters/ghost/audio")
+    assert r.status_code == 404
+    r = await client.get(f"/api/books/{book['book_id']}/chapters/ghost/chapter.vtt")
+    assert r.status_code == 404
+    # 不存在书籍的 speech.md PUT → 404，且不产生书籍目录
+    r = await client.put("/api/books/nope/chapters/x/speech.md",
+                         content="x", headers={"Content-Type": "text/plain"})
+    assert r.status_code == 404
+    assert not store.book_dir(tmp_path, "nope").exists()
+    # cancel 不存在任务 → 404
+    r = await client.post("/api/jobs/nope/cancel")
+    assert r.status_code == 404
+
+
 async def _wait(client, job_id: str, timeout: float = 30.0):
     import asyncio
     deadline = asyncio.get_event_loop().time() + timeout

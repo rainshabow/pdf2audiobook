@@ -11,15 +11,18 @@ router = APIRouter()
 async def get_speech(request: Request, book_id: str, chapter_id: str):
     path = store.chapter_dir(_data_dir(request), book_id, chapter_id) / "speech.md"
     if not path.exists():
-        return PlainTextResponse("", media_type="text/markdown")
+        return PlainTextResponse("", media_type="text/markdown; charset=utf-8")
     return PlainTextResponse(path.read_text(encoding="utf-8"),
                              media_type="text/markdown; charset=utf-8")
 
 
 @router.put("/{chapter_id}/speech.md")
 async def save_speech(request: Request, book_id: str, chapter_id: str):
+    data_dir = _data_dir(request)
+    if not store.book_dir(data_dir, book_id).exists():
+        raise HTTPException(404, "书籍不存在")
     body = (await request.body()).decode("utf-8")
-    ch_dir = store.chapter_dir(_data_dir(request), book_id, chapter_id)
+    ch_dir = store.chapter_dir(data_dir, book_id, chapter_id)
     ch_dir.mkdir(parents=True, exist_ok=True)
     (ch_dir / "speech.md").write_text(body, encoding="utf-8")
     return {"ok": True}

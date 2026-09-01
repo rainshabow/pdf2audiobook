@@ -20,13 +20,26 @@ def _book_kwargs(meta: dict) -> dict:
 @router.post("", response_model=Book)
 async def upload_book(request: Request, file: UploadFile):
     data_dir, _ = _ctx(request)
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(400, "仅支持 PDF 文件")
+    data = await file.read()
+    # 写盘前先用字节流校验，避免非法文件落地（Windows 上 fitz.open 失败后会锁住文件句柄，rmtree 无法清理）
+    import pymupdf as fitz
+    try:
+        fitz.open(stream=data, filetype="pdf").close()
+    except Exception:
+        raise HTTPException(400, "仅支持 PDF 文件")
     book_id = store.new_book_id()
     bdir = store.book_dir(data_dir, book_id)
     bdir.mkdir(parents=True)
     dest = bdir / "source.pdf"
-    dest.write_bytes(await file.read())
-    from app.services.pdf_extractor import extract_meta
-    meta = extract_meta(dest)
+    try:
+        dest.write_bytes(data)
+        from app.services.pdf_extractor import extract_meta
+        meta = extract_meta(dest)
+    except Exception:
+        shutil.rmtree(bdir, ignore_errors=True)
+        raise HTTPException(400, "仅支持 PDF 文件")
     meta.update({"book_id": book_id, "status": "uploaded", "toc": []})
     store.save_json(bdir / "meta.json", meta)
     return Book(**_book_kwargs(meta), chapter_count=0)
