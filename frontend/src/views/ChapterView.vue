@@ -11,7 +11,7 @@ const bookId = route.params.bookId as string;
 const chapterId = route.params.chapterId as string;
 const md = ref("");
 const saved = ref(false);
-const rebuilding = ref(false);
+const synthesizing = ref(false);
 const rewriting = ref(false);
 const isSource = ref(false);
 const error = ref("");
@@ -63,17 +63,17 @@ async function rewrite() {
     rewriting.value = false;
   }
 }
-async function rebuild() {
-  rebuilding.value = true;
+async function synthesize() {
+  synthesizing.value = true;
   error.value = "";
   try {
-    const job = await api.rebuildChapter(bookId, chapterId);
+    const job = await api.synthesizeChapter(bookId, chapterId);
     await waitForJob(job.id);
     audioVersion.value++;
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
   } finally {
-    rebuilding.value = false;
+    synthesizing.value = false;
   }
 }
 </script>
@@ -86,7 +86,7 @@ async function rebuild() {
     <div class="bar">
       <button @click="save">保存文本</button>
       <button :disabled="rewriting" @click="rewrite">改写本章</button>
-      <button :disabled="rebuilding" @click="rebuild">重建本章音频</button>
+      <button :disabled="synthesizing" @click="synthesize">合成本章音频</button>
       <span v-if="saved" class="ok">已保存</span>
       <span v-if="error" class="err">{{ error }}</span>
     </div>

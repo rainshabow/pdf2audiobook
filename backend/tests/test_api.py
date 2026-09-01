@@ -324,3 +324,29 @@ async def test_get_source_md(client, tmp_path):
     assert "第一章 开始" in r.text
     r = await client.get(f"/api/books/{book['book_id']}/chapters/ch-999/source.md")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_synthesize_chapter_endpoint(client, tmp_path):
+    """分章合成：POST /chapters/{ch}/synthesize → 任务完成 → audio.wav 生成。"""
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+    await client.put(
+        f"/api/books/{book['book_id']}/chapters/{ch}/speech.md",
+        content="第一句。\n\n第二句。", headers={"Content-Type": "text/plain"})
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/{ch}/synthesize")
+    assert r.status_code == 200
+    job = r.json()
+    assert job["type"] == "synthesize"
+    assert job["chapter_id"] == ch
+    await _wait(client, job["id"])
+    ch_dir = store.chapter_dir(tmp_path, book["book_id"], ch)
+    assert (ch_dir / "audio.wav").exists()
+    # 未知章节 404
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/ch-999/synthesize")
+    assert r.status_code == 404

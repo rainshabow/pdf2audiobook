@@ -56,6 +56,22 @@ async def save_speech(request: Request, book_id: str, chapter_id: str):
     return {"ok": True}
 
 
+@router.post("/{chapter_id}/synthesize", response_model=JobInfo)
+async def synthesize_chapter(request: Request, book_id: str, chapter_id: str):
+    data_dir = _data_dir(request)
+    book_id = _validate_id(book_id)
+    chapter_id = _validate_id(chapter_id)
+    bdir = store.book_dir(data_dir, book_id)
+    if not bdir.exists():
+        raise HTTPException(404, "书籍不存在")
+    chapters = store.load_json(bdir / "chapters.json", {"chapters": []})["chapters"]
+    if not any(c["id"] == chapter_id for c in chapters):
+        raise HTTPException(404, "章节不存在")
+    jm = request.app.state.job_manager
+    jid = jm.start("synthesize", book_id, chapter_id)
+    return JobInfo(**jm.get_job(jid))
+
+
 @router.post("/{chapter_id}/rewrite", response_model=JobInfo)
 async def rewrite_chapter(request: Request, book_id: str, chapter_id: str):
     data_dir = _data_dir(request)

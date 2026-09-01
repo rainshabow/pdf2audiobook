@@ -2,7 +2,10 @@
 import type { BookDetail, ChapterInfo } from "../api/client";
 
 defineProps<{ detail: BookDetail }>();
-const emit = defineEmits<{ (e: "open", ch: ChapterInfo): void }>();
+const emit = defineEmits<{
+  (e: "open", ch: ChapterInfo): void;
+  (e: "synthesize", ch: ChapterInfo): void;
+}>();
 
 const statusText: Record<string, string> = {
   pending: "待改写", rewritten: "待合成", synthesized: "已完成", edited: "已编辑", failed: "失败",
@@ -17,6 +20,7 @@ const statusText: Record<string, string> = {
       <span class="status" :data-status="ch.status">{{ statusText[ch.status] ?? ch.status }}</span>
       <span v-if="ch.audio_duration" class="dur">{{ Math.round(ch.audio_duration) }}s</span>
       <button @click="emit('open', ch)">编辑/播放</button>
+      <button @click="emit('synthesize', ch)">合成</button>
     </li>
   </ul>
 </template>

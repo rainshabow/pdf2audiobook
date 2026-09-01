@@ -36,6 +36,21 @@ async function startAndPoll(type: "parse" | "rewrite" | "synthesize") {
   await waitForJob(job.id);
 }
 
+async function synthesizeChapter(ch: ChapterInfo) {
+  const api = await import("../api/client");
+  busy.value = true;
+  error.value = "";
+  try {
+    const job = await api.synthesizeChapter(route.params.bookId as string, ch.id);
+    await waitForJob(job.id);
+    await books.loadBook(route.params.bookId as string);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
 function open(ch: ChapterInfo) {
   router.push(`/books/${route.params.bookId}/chapters/${ch.id}`);
 }
@@ -48,10 +63,10 @@ function open(ch: ChapterInfo) {
     <div class="actions">
       <button :disabled="busy" @click="run('parse')">① 解析章节</button>
       <button :disabled="busy" @click="run('rewrite')">② 全部改写</button>
-      <button :disabled="busy" @click="run('synthesize')">③ 合成语音</button>
+      <button :disabled="busy" @click="run('synthesize')">③ 全部合成</button>
       <span v-if="error" class="err">{{ error }}</span>
     </div>
-    <ChapterTree :detail="books.detail" @open="open" />
+    <ChapterTree :detail="books.detail" @open="open" @synthesize="synthesizeChapter" />
   </div>
 </template>
 

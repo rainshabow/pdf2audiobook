@@ -60,6 +60,9 @@ export async function rebuildChapter(bookId: string, ch: string): Promise<JobInf
 export async function rewriteChapter(bookId: string, ch: string): Promise<JobInfo> {
   return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`)).data;
 }
+export async function synthesizeChapter(bookId: string, ch: string): Promise<JobInfo> {
+  return (await api.post(`/books/${bookId}/chapters/${ch}/synthesize`)).data;
+}
 export const audioUrl = (bookId: string, ch: string) =>
   `/api/books/${bookId}/chapters/${ch}/audio`;
 export const vttUrl = (bookId: string, ch: string) =>
