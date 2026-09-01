@@ -47,7 +47,8 @@ async def test_rewrite_chapter_uses_client_and_writes_files(data_dir, monkeypatc
         def __init__(self):
             self.chat = FakeChat()
 
-    rw = rewriter.Rewriter(FakeClient(), "dsv4-flash", data_dir)  # type: ignore[arg-type]
+    fake = FakeClient()
+    rw = rewriter.Rewriter(fake, "dsv4-flash", data_dir)  # type: ignore[arg-type]
     progress = []
 
     async def on_progress(p):
@@ -58,7 +59,15 @@ async def test_rewrite_chapter_uses_client_and_writes_files(data_dir, monkeypatc
     assert "口语化结果" in (ch_dir / "speech.md").read_text(encoding="utf-8")
     cp = store.load_json(ch_dir / "rewrite_checkpoint.json", {})
     assert cp["done"]  # 非空
+    assert progress[0] == 0.0
     assert progress[-1] == 1.0
+    kwargs = fake.chat.completions.calls[0]
+    assert kwargs["model"] == "dsv4-flash"
+    assert kwargs["temperature"] == 0.3
+    roles = [m["role"] for m in kwargs["messages"]]
+    assert roles == ["system", "user"]
+    assert kwargs["messages"][0]["content"] == rewriter.SYSTEM_PROMPT
+    assert "表格：A|B" in kwargs["messages"][1]["content"]
 
 
 @pytest.mark.asyncio
@@ -115,4 +124,92 @@ async def test_rewrite_chapter_missing_source_raises(data_dir):
 
     with pytest.raises(FileNotFoundError):
         await rw.rewrite_chapter("b1", {"id": "ch-missing"}, noop)
+
+
+@pytest.mark.asyncio
+async def test_rewrite_chapter_empty_llm_result_raises_and_not_cached(data_dir):
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-003")
+    ch_dir.mkdir(parents=True)
+    (ch_dir / "source.md").write_text("内容。\n", encoding="utf-8")
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return type("R", (), {"choices": [type("C", (), {"message": type(
+                "M", (), {"content": ""})()})]})()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    rw = rewriter.Rewriter(FakeClient(), "dsv4-flash", data_dir)  # type: ignore[arg-type]
+
+    async def noop(p):
+        pass
+
+    with pytest.raises(RuntimeError, match="空结果"):
+        await rw.rewrite_chapter("b1", {"id": "ch-003"}, noop)
+    assert not (ch_dir / "rewrite_checkpoint.json").exists()  # 空结果不写 checkpoint
+    assert not list(ch_dir.glob(".rewrite_*.md"))  # 空结果不写缓存
+    assert not (ch_dir / "speech.md").exists()  # 任务失败，不产出 speech.md
+
+
+@pytest.mark.asyncio
+async def test_rewrite_chapter_empty_source_reports_full_progress(data_dir):
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-004")
+    ch_dir.mkdir(parents=True)
+    (ch_dir / "source.md").write_text("", encoding="utf-8")
+
+    rw = rewriter.Rewriter(None, "dsv4-flash", data_dir)  # type: ignore[arg-type]
+    progress = []
+
+    async def on_progress(p):
+        progress.append(p)
+
+    await rw.rewrite_chapter("b1", {"id": "ch-004"}, on_progress)
+    assert progress == [0.0, 1.0]
+    assert (ch_dir / "speech.md").read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.asyncio
+async def test_rewrite_chapter_resume_with_missing_cache_regenerates(data_dir):
+    import hashlib
+
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-005")
+    ch_dir.mkdir(parents=True)
+    src = "甲。" * 1300 + "\n\n" + "乙。" * 1300
+    sections = rewriter.Rewriter.split_sections(src)
+    h0 = hashlib.sha256(sections[0].encode("utf-8")).hexdigest()[:16]
+    store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [h0]})  # 缓存文件缺失
+    (ch_dir / "source.md").write_text(src, encoding="utf-8")
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = []
+
+        async def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return type("R", (), {"choices": [type("C", (), {"message": type(
+                "M", (), {"content": "重写结果"})()})]})()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    fake = FakeClient()
+    rw = rewriter.Rewriter(fake, "dsv4-flash", data_dir)  # type: ignore[arg-type]
+
+    async def noop(p):
+        pass
+
+    await rw.rewrite_chapter("b1", {"id": "ch-005"}, noop)
+    assert len(fake.chat.completions.calls) == len(sections)  # 缺缓存段被重新生成
+    text = (ch_dir / "speech.md").read_text(encoding="utf-8")
+    assert text.count("重写结果") == len(sections)
 

@@ -80,12 +80,15 @@ class Rewriter:
         done: set[str] = set(cp.get("done", []))
         outputs: list[str] = []
         total = len(sections)
+        await on_progress(0.0)
         for i, sec in enumerate(sections):
             h = _hash(sec)
-            if h in done:
-                outputs.append(_load_done(ch_dir, h))
+            cached = None if h not in done else _try_load_done(ch_dir, h)
+            if cached is not None:
+                outputs.append(cached)
                 await on_progress((i + 1) / total)
                 continue
+            done.discard(h)  # 缓存缺失/为空视为未完成，重新生成
             result = await self._call_llm(sec)
             _save_done(ch_dir, h, result)
             done.add(h)
@@ -93,6 +96,8 @@ class Rewriter:
             store.save_json(checkpoint_path, {"done": sorted(done)})
             await on_progress((i + 1) / total)
         (ch_dir / "speech.md").write_text(_join(outputs), encoding="utf-8")
+        if total == 0:
+            await on_progress(1.0)
 
     async def _call_llm(self, section: str) -> str:
         resp = await self._client.chat.completions.create(
@@ -103,7 +108,10 @@ class Rewriter:
             ],
             temperature=0.3,
         )
-        return resp.choices[0].message.content or ""
+        content = resp.choices[0].message.content or ""
+        if not content.strip():
+            raise RuntimeError("LLM 返回空结果")
+        return content
 
 
 def _hash(text: str) -> str:
@@ -115,8 +123,12 @@ def _save_done(ch_dir: Path, h: str, text: str) -> None:
     (ch_dir / f".rewrite_{h}.md").write_text(text, encoding="utf-8")
 
 
-def _load_done(ch_dir: Path, h: str) -> str:
-    return (ch_dir / f".rewrite_{h}.md").read_text(encoding="utf-8")
+def _try_load_done(ch_dir: Path, h: str) -> str | None:
+    try:
+        text = (ch_dir / f".rewrite_{h}.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return text or None
 
 
 def _join(parts: list[str]) -> str:
