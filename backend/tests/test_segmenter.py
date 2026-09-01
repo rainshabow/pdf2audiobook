@@ -100,3 +100,51 @@ def test_split_oversize_merges_and_splits_in_one_pass():
     toc = [{"level": 2, "title": "子节", "page": 20}]
     out = segmenter.split_oversize(chapters, toc, {"a+b": 8000, "ch-002": 20000}, high=15000)
     assert [c["id"] for c in out] == ["a+b", "ch-002-1"]
+
+
+def test_number_chapters_adds_sequential_to_plain_titles():
+    chapters = [
+        {"id": "ch-001", "title": "引言", "level": 1},
+        {"id": "ch-002", "title": "正文", "level": 1},
+    ]
+    out = segmenter.number_chapters(chapters)
+    assert out[0]["title"] == "1. 引言"
+    assert out[1]["title"] == "2. 正文"
+
+
+def test_number_chapters_keeps_existing_numbers():
+    chapters = [
+        {"id": "ch-001", "title": "1 LLM 架构与优化方法", "level": 1},
+        {"id": "ch-002", "title": "第2章 分词", "level": 1},
+        {"id": "ch-003", "title": "一、引言", "level": 1},
+        {"id": "ch-004", "title": "I 基础", "level": 1},
+        {"id": "ch-005", "title": "全书", "level": 1},
+    ]
+    out = segmenter.number_chapters(chapters)
+    assert out[0]["title"] == "1 LLM 架构与优化方法"
+    assert out[1]["title"] == "第2章 分词"
+    assert out[2]["title"] == "一、引言"
+    assert out[3]["title"] == "I 基础"
+    assert out[4]["title"] == "5. 全书"
+
+
+def test_number_chapters_prefixes_subsections_with_parent_dot_sub():
+    chapters = [
+        {"id": "ch-001", "title": "大章", "level": 1},
+        {"id": "ch-001-1", "title": "子节A", "level": 2},
+        {"id": "ch-001-2", "title": "子节B", "level": 2},
+        {"id": "ch-002", "title": "下一章", "level": 1},
+        {"id": "ch-002-1", "title": "子节C", "level": 2},
+    ]
+    out = segmenter.number_chapters(chapters)
+    assert out[0]["title"] == "1. 大章"
+    assert out[1]["title"] == "1.1 子节A"
+    assert out[2]["title"] == "1.2 子节B"
+    assert out[3]["title"] == "2. 下一章"
+    assert out[4]["title"] == "2.1 子节C"
+
+
+def test_number_chapters_handles_merged_title():
+    chapters = [{"id": "ch-001+ch-002", "title": "A + B", "level": 1}]
+    out = segmenter.number_chapters(chapters)
+    assert out[0]["title"] == "1. A + B"

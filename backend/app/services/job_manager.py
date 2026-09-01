@@ -132,6 +132,8 @@ class JobManager:
         # 超长章节按 TOC 二级标题拆分（拆分后按新范围重新提取计数）
         chapters = segmenter.split_oversize(chapters, meta["toc"], counts,
                                             rs.chapter_high_chars)
+        # 标题补序号/章节号（顶层 N.，子章节 父.子）
+        chapters = segmenter.number_chapters(chapters)
         for ch in chapters:
             blocks = pdf_extractor.extract_blocks(pdf_path, ch["page_start"], ch["page_end"])
             md = pdf_extractor.blocks_to_markdown(blocks)

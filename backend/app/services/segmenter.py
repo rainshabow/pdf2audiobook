@@ -6,6 +6,13 @@ from app.store import new_book_id
 
 _CHAPTER_PREFIX_RE = re.compile(r"^(第[一二三四五六七八九十百千0-9]+[章节部篇]|\d+(\.\d+)*\s)")
 
+_ALREADY_NUMBERED_RE = re.compile(
+    r"^(\d+(\.\d+)*[\s、．.]|第[一二三四五六七八九十百千0-9]+[章节部篇]|"
+    r"[一二三四五六七八九十百千]+[、．.\s]|[IVXLCDM]+[\s、．.])"
+)
+
+_SUB_ID_RE = re.compile(r"^ch-\d{3}([+]ch-\d{3})*-\d+$")
+
 
 def segment_from_toc(toc: list[dict]) -> list[dict]:
     """以顶层章节为基本单元；顶层之间自动补页范围。"""
@@ -109,6 +116,32 @@ def build_candidates(pdf_path: Path, meta: dict) -> list[dict]:
                          "page_start": page, "page_end": page_end, "char_count": 0})
     return chapters
 
+
+
+def number_chapters(chapters: list[dict]) -> list[dict]:
+    """为章节标题补充序号/章节号（就地修改 title）。
+
+    - 顶层章节：按顺序补 `N. ` 前缀；标题已含编号（`1. `、`1.1 `、`第N章/节/部/篇`、
+      `一、`、罗马数字等）则保留原编号。
+    - 子章节（id 含 `-`，来自超长章节拆分）：补 `父序号.子序号 ` 前缀。
+    """
+    top_no = 0
+    for ch in chapters:
+        title = ch.get("title", "").strip()
+        cid = str(ch.get("id", ""))
+        # 子章节 id 形如 ch-001-1 / ch-001+ch-002-1（父 id 合法 + '-数字' 结尾）
+        if _SUB_ID_RE.match(cid):
+            sub = cid.rsplit("-", 1)[1]
+            sub_no = int(sub) if sub.isdigit() else 0
+            parent_no = top_no  # 当前位置之前已见到的顶层章节数 = 父章节序号
+            prefix = f"{parent_no}.{sub_no}"
+            if title and not _ALREADY_NUMBERED_RE.match(title):
+                ch["title"] = f"{prefix} {title}"
+        else:
+            top_no += 1
+            if title and not _ALREADY_NUMBERED_RE.match(title):
+                ch["title"] = f"{top_no}. {title}"
+    return chapters
 
 def _chapter_id(idx: int) -> str:
     return f"ch-{idx:03d}"

@@ -284,3 +284,34 @@ async def test_synthesize_empty_speech_fails_with_clear_error(data_dir):
         assert "本章无内容可合成" in job["error"]
     finally:
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_parse_job_adds_sequence_numbers_to_titles(data_dir):
+    """无编号 TOC 的书籍解析后，章节标题带序号（1. / 2.）。"""
+    pdf = data_dir / "book_unnumbered.pdf"
+    doc = fitz.open()
+    for text in ["开头", "正文"]:
+        page = doc.new_page()
+        page.insert_text((72, 72), text, fontsize=18, fontname='china-s')
+    doc.set_toc([[1, "开头", 1], [1, "正文", 2]])
+    doc.save(str(pdf))
+    doc.close()
+
+    bdir = store.book_dir(data_dir, "b11")
+    bdir.mkdir(parents=True)
+    (bdir / "source.pdf").write_bytes(pdf.read_bytes())
+
+    ss = SettingsStore(data_dir)
+    ss.save(RuntimeSettings(chapter_low_chars=1, chapter_high_chars=10**9))
+    jm = job_manager.JobManager(data_dir, ss)
+    jm.start_worker()
+    try:
+        jid = jm.start("parse", "b11")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        chapters = store.load_json(bdir / "chapters.json", {})["chapters"]
+        titles = [c["title"] for c in chapters]
+        assert titles == ["1. 开头", "2. 正文"]
+    finally:
+        await jm.shutdown()
