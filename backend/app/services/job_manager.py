@@ -37,13 +37,23 @@ class JobManager:
             self._worker_task = asyncio.create_task(self._worker())
 
     async def shutdown(self) -> None:
-        if self._worker_task:
-            self._worker_task.cancel()
+        """把在途/排队任务置为终态后停止 worker，避免重启后遗留 running/pending 行。"""
+        if self._worker_task is None:
+            return
+        if self._current_job_id:
+            self._db.update_job(self._current_job_id, status="cancelled")
+        while True:
             try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
-            self._worker_task = None
+                jid, *_ = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._db.update_job(jid, status="cancelled")
+        self._worker_task.cancel()
+        try:
+            await self._worker_task
+        except asyncio.CancelledError:
+            pass
+        self._worker_task = None
 
     def start(self, job_type: JobType, book_id: str, chapter_id: str | None = None) -> str:
         jid = store.new_book_id()
@@ -60,9 +70,16 @@ class JobManager:
         return self._db.list_jobs()
 
     def cancel(self, job_id: str) -> None:
+        job = self._db.get_job(job_id)
+        if job is None or job["status"] in ("done", "failed", "cancelled"):
+            return  # 不存在或已终态：不加入 flags，也不触发 interrupt
         self._cancel_flags.add(job_id)
         if self._current_job_id == job_id and self._current_adapter is not None:
-            asyncio.create_task(self._current_adapter.interrupt())
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return  # 无运行事件循环时跳过 interrupt
+            loop.create_task(self._current_adapter.interrupt())
 
     async def _worker(self) -> None:
         while True:
@@ -85,7 +102,8 @@ class JobManager:
             except _JobCancelled:
                 self._db.update_job(jid, status="cancelled")
             except Exception as exc:  # noqa: BLE001
-                self._db.update_job(jid, status="failed", error=str(exc))
+                self._db.update_job(jid, status="failed",
+                                    error=f"{type(exc).__name__}: {exc}")
             finally:
                 self._cancel_flags.discard(jid)
                 self._current_job_id = None
@@ -104,7 +122,7 @@ class JobManager:
         for ch in candidates:
             blocks = pdf_extractor.extract_blocks(pdf_path, ch["page_start"], ch["page_end"])
             counts[ch["id"]] = len(pdf_extractor.blocks_to_markdown(blocks))
-            await self._maybe_cancel(book_id)
+            await self._maybe_cancel()
         chapters = segmenter.adaptive_merge(candidates, counts,
                                             rs.chapter_low_chars, rs.chapter_high_chars)
         for ch in chapters:
@@ -130,7 +148,7 @@ class JobManager:
         for i, ch in enumerate(chapters):
             async def on_progress(p: float) -> None:
                 overall = (i + p) / len(chapters)
-                await self._maybe_cancel(book_id)
+                await self._maybe_cancel()
                 self._db.update_job(self._current_job_id or "", progress=overall)
             await rw.rewrite_chapter(book_id, ch, on_progress)
             ch_dir = store.chapter_dir(self._data_dir, book_id, ch["id"])
@@ -144,16 +162,21 @@ class JobManager:
         rs = self._settings_store.load()
         adapter = self._tts_factory(rs, self._settings)
         self._current_adapter = adapter
-        for i, ch in enumerate(chapters):
-            ch_dir = store.chapter_dir(self._data_dir, book_id, ch["id"])
-            speech_path = ch_dir / "speech.md"
-            if not speech_path.exists():
-                raise FileNotFoundError(f"缺少 speech.md: {speech_path}")
-            segments = await self._synthesize_chapter(adapter, ch_dir, speech_path, rs, i, len(chapters))
-            ch["status"] = "synthesized"
-            ch["audio_duration"] = round(sum(s["end"] - s["start"] for s in segments), 3)
-            store.save_json(ch_dir / "status.json", ch)
-            self._save_chapters(book_id, chapters)
+        try:
+            for i, ch in enumerate(chapters):
+                ch_dir = store.chapter_dir(self._data_dir, book_id, ch["id"])
+                speech_path = ch_dir / "speech.md"
+                if not speech_path.exists():
+                    raise FileNotFoundError(f"缺少 speech.md: {speech_path}")
+                segments = await self._synthesize_chapter(adapter, ch_dir, speech_path, rs, i, len(chapters))
+                ch["status"] = "synthesized"
+                ch["audio_duration"] = round(sum(s["end"] - s["start"] for s in segments), 3)
+                store.save_json(ch_dir / "status.json", ch)
+                self._save_chapters(book_id, chapters)
+        finally:
+            close = getattr(adapter, "aclose", None)
+            if close is not None:
+                await close()
 
     async def _synthesize_chapter(self, adapter: TTSAdapter, ch_dir: Path,
                                   speech_path: Path, rs: RuntimeSettings,
@@ -165,7 +188,7 @@ class JobManager:
         segments: list[dict] = []
         cursor = 0.0
         for idx, seg_text in enumerate(parts):
-            await self._maybe_cancel(ch_dir.parents[1].name)
+            await self._maybe_cancel()
             h = audio.text_hash(seg_text)
             part_path = parts_dir / f"{idx:04d}_{h}.wav"
             if part_path.exists():
@@ -180,13 +203,20 @@ class JobManager:
             cursor += duration
             self._db.update_job(self._current_job_id or "",
                                 progress=(ch_idx + (idx + 1) / len(parts)) / total)
-        part_bytes = [p.read_bytes() for p in sorted(parts_dir.glob("*.wav"))]
+        # 只拼接当前 segments 引用的分片，避免改写 speech.md 后陈旧 parts 混入 audio.wav
+        part_bytes = [(parts_dir / f"{s['index'] - 1:04d}_{s['hash']}.wav").read_bytes()
+                      for s in segments]
         wav = audio.concat_wavs(part_bytes, self._data_dir / "tmp")
         if abs(rs.tts_speed - 1.0) > 1e-6:
             wav = audio.speed_wav(wav, rs.tts_speed, self._data_dir / "tmp")
             for s in segments:
                 s["start"] = round(s["start"] / rs.tts_speed, 3)
                 s["end"] = round(s["end"] / rs.tts_speed, 3)
+        # 清理未被当前 segments 引用的旧分片（保留增量复用语义）
+        used = {f"{s['index'] - 1:04d}_{s['hash']}.wav" for s in segments}
+        for old in parts_dir.glob("*.wav"):
+            if old.name not in used:
+                old.unlink()
         (ch_dir / "audio.wav").write_bytes(wav)
         store.save_json(ch_dir / "segments.json", segments)
         srt, vtt = audio.build_subtitles(segments)
@@ -209,7 +239,7 @@ class JobManager:
         store.save_json(store.book_dir(self._data_dir, book_id) / "chapters.json",
                         {"chapters": chapters})
 
-    async def _maybe_cancel(self, book_id: str) -> None:
+    async def _maybe_cancel(self) -> None:
         jid = self._current_job_id or ""
         if jid in self._cancel_flags:
             raise _JobCancelled()
