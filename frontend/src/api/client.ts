@@ -72,6 +72,9 @@ export async function rewriteChapter(
 export async function synthesizeChapter(bookId: string, ch: string): Promise<JobInfo> {
   return (await api.post(`/books/${bookId}/chapters/${ch}/synthesize`)).data;
 }
+export async function restoreChapter(bookId: string, ch: string): Promise<void> {
+  await api.post(`/books/${bookId}/chapters/${ch}/restore`);
+}
 export const audioUrl = (bookId: string, ch: string) =>
   `/api/books/${bookId}/chapters/${ch}/audio`;
 export const vttUrl = (bookId: string, ch: string) =>

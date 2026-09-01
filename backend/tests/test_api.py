@@ -400,3 +400,30 @@ async def test_upload_clone_audio_and_settings_fields(client, tmp_path):
     assert got["tts_clone_ref_audio"] == "clone_ref_audio.wav"
     assert got["rewrite_concurrency"] == 8
     assert got["tts_batch_size"] == 5
+
+
+@pytest.mark.asyncio
+async def test_restore_chapter_to_source(client, tmp_path):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+    src = (await client.get(
+        f"/api/books/{book['book_id']}/chapters/{ch}/source.md")).text
+    # 先写入修改后的 speech.md
+    await client.put(f"/api/books/{book['book_id']}/chapters/{ch}/speech.md",
+                     content="人工修改后的文本", headers={"Content-Type": "text/plain"})
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/{ch}/restore")
+    assert r.status_code == 200
+    sp = (await client.get(
+        f"/api/books/{book['book_id']}/chapters/{ch}/speech.md")).text
+    assert sp == src  # 已还原为原文
+    prev = (tmp_path / "books" / book["book_id"] / "chapters" / ch / "speech.previous.md")
+    assert prev.exists()
+    assert "人工修改后的文本" in prev.read_text(encoding="utf-8")
+    # 未解析书籍 → 404
+    r = await client.post("/api/books/nonexistent/chapters/ch-001/restore")
+    assert r.status_code == 404

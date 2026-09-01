@@ -142,7 +142,12 @@ class Rewriter:
         if tasks:
             await asyncio.gather(*tasks)
         outputs = [r for r in results if r is not None]
-        (ch_dir / "speech.md").write_text(_join(outputs), encoding="utf-8")
+        speech_path = ch_dir / "speech.md"
+        if speech_path.exists():
+            # 改写前备份当前文本，支持还原/回溯
+            (ch_dir / "speech.previous.md").write_text(
+                speech_path.read_text(encoding="utf-8"), encoding="utf-8")
+        speech_path.write_text(_join(outputs), encoding="utf-8")
         if total == 0:
             await on_progress(1.0)
 

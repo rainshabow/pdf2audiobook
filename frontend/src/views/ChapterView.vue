@@ -37,6 +37,21 @@ onMounted(async () => {
   }
 });
 
+async function restore() {
+  if (!window.confirm("确定将本章文本还原为最初的原文（source.md）吗？当前文本会备份到 speech.previous.md。")) {
+    return;
+  }
+  error.value = "";
+  try {
+    await api.restoreChapter(bookId, chapterId);
+    md.value = await api.getSpeechMd(bookId, chapterId);
+    isSource.value = true;
+    saved.value = true;
+    setTimeout(() => (saved.value = false), 2000);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? String(e);
+  }
+}
 async function save() {
   error.value = "";
   try {
@@ -86,6 +101,7 @@ async function synthesize() {
     <p v-if="isSource" class="hint">当前为原始抽取文本（本章尚未改写）——可直接编辑保存，或点「改写本章」生成口语化文本。</p>
     <div class="bar">
       <button @click="save">保存文本</button>
+      <button @click="restore">还原原文</button>
       <label class="conc">并发
         <input type="number" v-model.number="rewriteConcurrency" min="1" max="100" />
       </label>

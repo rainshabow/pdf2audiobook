@@ -52,8 +52,33 @@ async def save_speech(request: Request, book_id: str, chapter_id: str):
     body = (await request.body()).decode("utf-8")
     ch_dir = store.chapter_dir(data_dir, book_id, chapter_id)
     ch_dir.mkdir(parents=True, exist_ok=True)
-    (ch_dir / "speech.md").write_text(body, encoding="utf-8")
+    speech_path = ch_dir / "speech.md"
+    if speech_path.exists():
+        (ch_dir / "speech.previous.md").write_text(
+            speech_path.read_text(encoding="utf-8"), encoding="utf-8")
+    speech_path.write_text(body, encoding="utf-8")
     return {"ok": True}
+
+
+@router.post("/{chapter_id}/restore")
+async def restore_chapter(request: Request, book_id: str, chapter_id: str):
+    """把 speech.md 还原为最初的原文 source.md（还原前自动备份当前文本）。"""
+    data_dir = _data_dir(request)
+    book_id = _validate_id(book_id)
+    chapter_id = _validate_id(chapter_id)
+    ch_dir = store.chapter_dir(data_dir, book_id, chapter_id)
+    if not store.book_dir(data_dir, book_id).exists():
+        raise HTTPException(404, "书籍不存在")
+    source_path = ch_dir / "source.md"
+    if not source_path.exists():
+        raise HTTPException(404, "原始文本不存在，请先解析")
+    speech_path = ch_dir / "speech.md"
+    if speech_path.exists():
+        # 备份当前文本，避免误操作丢失
+        (ch_dir / "speech.previous.md").write_text(
+            speech_path.read_text(encoding="utf-8"), encoding="utf-8")
+    speech_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+    return {"ok": True, "restored_from": "source.md"}
 
 
 @router.post("/{chapter_id}/synthesize", response_model=JobInfo)
