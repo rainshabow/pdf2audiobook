@@ -72,6 +72,7 @@ async def test_synthesize_posts_custom_voice_and_reads_duration():
     assert body["speaker"] == "小明"
     assert body["language"] == "zh"
     assert body["instruct"] == "用温柔的语气说"
+    # instruct=None 时应发送空字符串（webui 要求 str，不允许 null）
     assert body["segment_gen"] is False
     await adapter._client.aclose()
 
@@ -88,4 +89,30 @@ async def test_interrupt_posts():
     adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await adapter.interrupt()
     assert captured["path"] == "/qwenapi/v1/interrupt"
+    await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_none_instruct_sent_as_empty_string():
+    import base64
+    import io
+    import math
+    import struct
+    import wave
+
+    wav = _wav_bytes(1.0)
+    captured = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured["body"] = json.loads(request.content)
+        payload = {"audio_files_base64": [base64.b64encode(wav).decode()]}
+        return httpx.Response(200, json=payload)
+
+    adapter = QwenWebUIAdapter("http://127.0.0.1:7860", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await adapter.synthesize("测试文本", voice=None, language=None, instruct=None)
+    assert captured["body"]["instruct"] == ""
+    assert "speaker" in captured["body"] and captured["body"]["speaker"] is None
+    assert "language" in captured["body"] and captured["body"]["language"] is None
     await adapter._client.aclose()

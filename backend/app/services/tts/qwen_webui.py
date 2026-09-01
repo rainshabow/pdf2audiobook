@@ -32,7 +32,7 @@ class QwenWebUIAdapter(TTSAdapter):
             "model_name": self._model,
             "text": text,
             "speaker": voice,
-            "instruct": instruct,
+            "instruct": instruct or "",  # webui 要求字符串，None 会 422
             "language": language,
             "segment_gen": False,
         }
