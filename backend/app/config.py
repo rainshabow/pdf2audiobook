@@ -6,6 +6,15 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _env_file_path() -> Path:
+    """仓库根 `.env` 的绝对路径（`backend/app/config.py` → parents[2] 即仓库根）。
+
+    后端从 `backend/` 目录启动，`env_file` 若用相对路径会按 cwd 解析而读不到
+    仓库根 `.env`，导致 OPENAI_API_KEY 被静默忽略。
+    """
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
 class Settings(BaseSettings):
     """从 .env 读取的敏感/固定配置。"""
     openai_base_url: str = "https://opencode.ai/zen/go/v1"
@@ -22,7 +31,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=_env_file_path(), env_file_encoding="utf-8", extra="ignore"
     )
 
 
