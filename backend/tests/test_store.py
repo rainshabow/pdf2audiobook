@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+
+import pytest
+
 from app import store
 
 
@@ -35,3 +38,16 @@ def test_jobdb_crud(tmp_path: Path):
     assert len(db.list_jobs()) == 1
     db.delete_job("j1")
     assert db.get_job("j1") is None
+
+
+def test_validate_id_accepts_whitelist():
+    assert store.validate_id("b1") == "b1"
+    assert store.validate_id("ch-001-1") == "ch-001-1"
+    assert store.validate_id("a+b_c") == "a+b_c"
+
+
+def test_validate_id_rejects_traversal_and_illegal_chars():
+    for bad in ["..", "../etc", "..\\..\\etc", "a/b", "a b", "", "a.b",
+                "..%2F..%2Fetc", "..%5C..%5Cetc"]:
+        with pytest.raises(ValueError):
+            store.validate_id(bad)

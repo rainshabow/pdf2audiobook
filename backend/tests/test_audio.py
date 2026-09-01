@@ -128,3 +128,19 @@ def test_text_hash_stable():
     assert audio.text_hash("abc") == audio.text_hash("abc")
     assert audio.text_hash("abc") != audio.text_hash("abd")
 
+
+
+def test_concat_wavs_cleans_tmp(tmp_path):
+    out = audio.concat_wavs([_wav(1.0), _wav(0.5)], tmp_path)
+    assert audio.wav_duration(out) > 1.0
+    assert list(tmp_path.iterdir()) == []  # part_*/concat.txt/concat_out.wav 已清理
+
+
+def test_concat_wavs_single_part_cleans_tmp(tmp_path):
+    audio.concat_wavs([_wav(1.0)], tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_speed_wav_cleans_tmp(tmp_path):
+    audio.speed_wav(_wav(1.0), 2.0, tmp_path)
+    assert list(tmp_path.iterdir()) == []  # speed_src/speed_dst/norm_* 已清理

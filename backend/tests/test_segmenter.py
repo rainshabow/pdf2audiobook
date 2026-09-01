@@ -48,3 +48,55 @@ def test_detect_headings():
     ]
     heads = segmenter.detect_headings(blocks)
     assert heads == [(1, "第1章 开始"), (2, "1.1 子节")]
+
+
+def test_split_oversize_splits_by_level2():
+    chapters = [{"id": "ch-001", "title": "大章", "level": 1,
+                 "page_start": 1, "page_end": 100, "char_count": 20000}]
+    toc = [
+        {"level": 1, "title": "大章", "page": 1},
+        {"level": 2, "title": "一、小标题A", "page": 10},
+        {"level": 2, "title": "二、小标题B", "page": 50},
+    ]
+    out = segmenter.split_oversize(chapters, toc, {"ch-001": 20000}, high=15000)
+    assert len(out) == 2
+    assert out[0]["id"] == "ch-001-1"
+    assert out[0]["title"] == "一、小标题A"
+    assert out[0]["level"] == 2
+    assert out[0]["page_start"] == 10
+    assert out[0]["page_end"] == 49
+    assert out[1]["id"] == "ch-001-2"
+    assert out[1]["title"] == "二、小标题B"
+    assert out[1]["page_start"] == 50
+    assert out[1]["page_end"] == 100
+
+
+def test_split_oversize_keeps_oversize_without_level2():
+    chapters = [{"id": "ch-001", "title": "大章", "level": 1,
+                 "page_start": 1, "page_end": 100, "char_count": 20000}]
+    toc = [{"level": 1, "title": "大章", "page": 1}]
+    out = segmenter.split_oversize(chapters, toc, {"ch-001": 20000}, high=15000)
+    assert len(out) == 1
+    assert out[0]["id"] == "ch-001"
+
+
+def test_split_oversize_keeps_under_high():
+    chapters = [{"id": "ch-001", "title": "章", "level": 1,
+                 "page_start": 1, "page_end": 100, "char_count": 10000}]
+    toc = [{"level": 2, "title": "小节", "page": 10}]
+    out = segmenter.split_oversize(chapters, toc, {"ch-001": 10000}, high=15000)
+    assert len(out) == 1
+    assert out[0]["id"] == "ch-001"
+
+
+def test_split_oversize_merges_and_splits_in_one_pass():
+    # 合并后的小章（id 含 +）不超限保持；超长大章按 level-2 拆分
+    chapters = [
+        {"id": "a+b", "title": "A + B", "level": 1,
+         "page_start": 1, "page_end": 10, "char_count": 8000},
+        {"id": "ch-002", "title": "大章", "level": 1,
+         "page_start": 11, "page_end": 50, "char_count": 20000},
+    ]
+    toc = [{"level": 2, "title": "子节", "page": 20}]
+    out = segmenter.split_oversize(chapters, toc, {"a+b": 8000, "ch-002": 20000}, high=15000)
+    assert [c["id"] for c in out] == ["a+b", "ch-002-1"]

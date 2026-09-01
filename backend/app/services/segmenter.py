@@ -37,7 +37,7 @@ def detect_headings(blocks: list[pdf_extractor.ExtractedBlock]) -> list[tuple[in
 
 def adaptive_merge(chapters: list[dict], char_counts: dict[str, int],
                    low: int, high: int) -> list[dict]:
-    """合并过小相邻章节；超过 high 的章节暂不拆分（由 UI 手动调整兜底）。"""
+    """合并过小相邻章节；超过 high 的章节留给 split_oversize 按二级标题拆分。"""
     merged: list[dict] = []
     for ch in chapters:
         ch["char_count"] = int(char_counts.get(ch["id"], 0))
@@ -51,6 +51,42 @@ def adaptive_merge(chapters: list[dict], char_counts: dict[str, int],
         else:
             merged.append(ch)
     return merged
+
+
+def split_oversize(chapters: list[dict], toc: list[dict], char_counts: dict[str, int],
+                   high: int) -> list[dict]:
+    """把超过 high 上限的章节按 TOC 二级标题拆分为子章节（递归一次）。
+
+    无 level-2 条目的超长章节保持原样；子章节 id 用 `父id-序号`（如 ch-001-1），
+    page_start/page_end 按二级条目页计算，char_count 由调用方按新范围重新提取。
+    """
+    out: list[dict] = []
+    for ch in chapters:
+        count = int(char_counts.get(ch["id"], ch.get("char_count", 0)))
+        ch["char_count"] = count
+        if count <= high:
+            out.append(ch)
+            continue
+        sub_titles = sorted(
+            (e for e in toc
+             if e["level"] == 2 and ch["page_start"] <= e["page"] <= ch["page_end"]),
+            key=lambda e: e["page"],
+        )
+        if not sub_titles:
+            out.append(ch)  # 无 level-2 条目：不拆分，保持原样
+            continue
+        for i, entry in enumerate(sub_titles):
+            page_end = (sub_titles[i + 1]["page"] - 1
+                        if i + 1 < len(sub_titles) else ch["page_end"])
+            out.append({
+                "id": f"{ch['id']}-{i + 1}",
+                "title": entry["title"].strip(),
+                "level": 2,
+                "page_start": entry["page"],
+                "page_end": page_end,
+                "char_count": 0,
+            })
+    return out
 
 
 def build_candidates(pdf_path: Path, meta: dict) -> list[dict]:

@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { ChapterInfo } from "../api/client";
 import { useBooksStore } from "../stores/books";
+import { waitForJob } from "../utils/jobs";
 import ChapterTree from "../components/ChapterTree.vue";
 
 const route = useRoute();
@@ -32,14 +33,7 @@ async function run(type: "parse" | "rewrite" | "synthesize") {
 async function startAndPoll(type: "parse" | "rewrite" | "synthesize") {
   const api = await import("../api/client");
   const job = await api.startJob(route.params.bookId as string, type);
-  while (true) {
-    await new Promise((r) => setTimeout(r, 1500));
-    const jobs = await api.listJobs();
-    const cur = jobs.find((j) => j.id === job.id);
-    if (!cur) break;
-    if (cur.status === "done") break;
-    if (cur.status === "failed" || cur.status === "cancelled") throw new Error(cur.error ?? cur.status);
-  }
+  await waitForJob(job.id);
 }
 
 function open(ch: ChapterInfo) {

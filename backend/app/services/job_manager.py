@@ -114,6 +114,10 @@ class JobManager:
         bdir = store.book_dir(self._data_dir, book_id)
         pdf_path = bdir / "source.pdf"
         meta = pdf_extractor.extract_meta(pdf_path)
+        # 保留上传时回退的原始文件名标题，避免解析覆盖为 source.pdf 的 stem
+        prev_meta = store.load_json(bdir / "meta.json", {})
+        if prev_meta.get("title"):
+            meta["title"] = prev_meta["title"]
         meta.update({"book_id": book_id, "status": "parsed",
                      "toc": pdf_extractor.extract_toc(pdf_path)})
         candidates = segmenter.build_candidates(pdf_path, meta)
@@ -125,6 +129,9 @@ class JobManager:
             await self._maybe_cancel()
         chapters = segmenter.adaptive_merge(candidates, counts,
                                             rs.chapter_low_chars, rs.chapter_high_chars)
+        # 超长章节按 TOC 二级标题拆分（拆分后按新范围重新提取计数）
+        chapters = segmenter.split_oversize(chapters, meta["toc"], counts,
+                                            rs.chapter_high_chars)
         for ch in chapters:
             blocks = pdf_extractor.extract_blocks(pdf_path, ch["page_start"], ch["page_end"])
             md = pdf_extractor.blocks_to_markdown(blocks)
@@ -183,6 +190,8 @@ class JobManager:
                                   ch_idx: int, total: int) -> list[dict]:
         text = speech_path.read_text(encoding="utf-8")
         parts = audio.split_speech_text(text, max_chars=500)
+        if not parts:
+            raise ValueError("本章无内容可合成")
         parts_dir = ch_dir / "parts"
         parts_dir.mkdir(parents=True, exist_ok=True)
         segments: list[dict] = []

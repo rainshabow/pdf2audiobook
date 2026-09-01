@@ -1,10 +1,20 @@
 import json
+import re
 import sqlite3
 import threading
 import uuid
 from pathlib import Path
 
 _DATA_DIR_NAME = "books"
+
+VALID_ID_RE = re.compile(r"^[A-Za-z0-9_+\-]+$")
+
+
+def validate_id(book_id: str) -> str:
+    """校验书籍/章节 ID 只含白名单字符，非法时抛 ValueError。"""
+    if not isinstance(book_id, str) or VALID_ID_RE.fullmatch(book_id) is None:
+        raise ValueError("非法 ID")
+    return book_id
 
 
 def init_store(data_dir: Path) -> None:

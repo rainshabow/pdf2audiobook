@@ -26,13 +26,23 @@ async def put_settings(request: Request, view: SettingsView):
 @router.get("/tts/models", response_model=list[TTSModelInfo])
 async def list_tts_models(request: Request):
     adapter = request.app.state.build_tts_adapter()
-    return [TTSModelInfo(**m) for m in await adapter.list_models()]
+    try:
+        return [TTSModelInfo(**m) for m in await adapter.list_models()]
+    finally:
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()
 
 
 @router.get("/tts/speakers", response_model=list[TTSSpeakerInfo])
 async def list_tts_speakers(request: Request):
     adapter = request.app.state.build_tts_adapter()
-    speakers = await adapter.list_speakers()
-    if speakers and isinstance(speakers[0], str):
-        return [TTSSpeakerInfo(name=s) for s in speakers]
-    return [TTSSpeakerInfo(**s) for s in speakers]
+    try:
+        speakers = await adapter.list_speakers()
+        if speakers and isinstance(speakers[0], str):
+            return [TTSSpeakerInfo(name=s) for s in speakers]
+        return [TTSSpeakerInfo(**s) for s in speakers]
+    finally:
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()

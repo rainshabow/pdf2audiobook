@@ -22,18 +22,20 @@ def concat_wavs(parts: list[bytes], tmp_dir: Path) -> bytes:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     if len(parts) == 1:
         return _normalize(parts[0], tmp_dir)
-    norm_paths = []
-    for i, p in enumerate(parts):
-        path = tmp_dir / f"part_{i:04d}.wav"
-        path.write_bytes(_normalize(p, tmp_dir))
-        norm_paths.append(path)
+    norm_paths: list[Path] = []
     list_path = tmp_dir / "concat.txt"
-    list_path.write_text("".join(f"file '{p.name}'\n" for p in norm_paths), encoding="utf-8")
     out_path = tmp_dir / "concat_out.wav"
-    _ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
-             "-c", "copy", str(out_path)])
-    data = out_path.read_bytes()
-    return data
+    try:
+        for i, p in enumerate(parts):
+            path = tmp_dir / f"part_{i:04d}.wav"
+            path.write_bytes(_normalize(p, tmp_dir))
+            norm_paths.append(path)
+        list_path.write_text("".join(f"file '{p.name}'\n" for p in norm_paths), encoding="utf-8")
+        _ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+                 "-c", "copy", str(out_path)])
+        return out_path.read_bytes()
+    finally:
+        _cleanup(*norm_paths, list_path, out_path)
 
 
 def speed_wav(data: bytes, factor: float, tmp_dir: Path) -> bytes:
@@ -43,20 +45,23 @@ def speed_wav(data: bytes, factor: float, tmp_dir: Path) -> bytes:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     src = tmp_dir / "speed_src.wav"
     dst = tmp_dir / "speed_dst.wav"
-    src.write_bytes(_normalize(data, tmp_dir))
-    # atempo 支持 0.5–2.0，超范围时链式调用
-    filters = []
-    remaining = factor
-    while remaining > 2.0:
-        filters.append("atempo=2.0")
-        remaining /= 2.0
-    while remaining < 0.5:
-        filters.append("atempo=0.5")
-        remaining /= 0.5
-    filters.append(f"atempo={remaining:.6f}")
-    _ffmpeg(["-y", "-i", str(src), "-filter:a", ",".join(filters),
-             "-ar", str(_RATE), "-ac", "1", str(dst)])
-    return dst.read_bytes()
+    try:
+        src.write_bytes(_normalize(data, tmp_dir))
+        # atempo 支持 0.5–2.0，超范围时链式调用
+        filters = []
+        remaining = factor
+        while remaining > 2.0:
+            filters.append("atempo=2.0")
+            remaining /= 2.0
+        while remaining < 0.5:
+            filters.append("atempo=0.5")
+            remaining /= 0.5
+        filters.append(f"atempo={remaining:.6f}")
+        _ffmpeg(["-y", "-i", str(src), "-filter:a", ",".join(filters),
+                 "-ar", str(_RATE), "-ac", "1", str(dst)])
+        return dst.read_bytes()
+    finally:
+        _cleanup(src, dst)
 
 
 def build_subtitles(segments: list[dict]) -> tuple[str, str]:
@@ -111,10 +116,22 @@ def text_hash(text: str) -> str:
 def _normalize(data: bytes, tmp_dir: Path) -> bytes:
     src = tmp_dir / "norm_src.wav"
     dst = tmp_dir / "norm_dst.wav"
-    src.write_bytes(data)
-    _ffmpeg(["-y", "-i", str(src), "-ar", str(_RATE), "-ac", "1",
-             "-c:a", "pcm_s16le", str(dst)])
-    return dst.read_bytes()
+    try:
+        src.write_bytes(data)
+        _ffmpeg(["-y", "-i", str(src), "-ar", str(_RATE), "-ac", "1",
+                 "-c:a", "pcm_s16le", str(dst)])
+        return dst.read_bytes()
+    finally:
+        _cleanup(src, dst)
+
+
+def _cleanup(*paths: Path) -> None:
+    """best-effort 删除临时文件：失败不影响结果。"""
+    for p in paths:
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _ffmpeg(args: list[str]) -> None:

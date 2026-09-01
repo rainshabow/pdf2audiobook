@@ -1,4 +1,6 @@
 import shutil
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 
@@ -11,6 +13,13 @@ router = APIRouter()
 def _ctx(request: Request):
     s = request.app.state
     return s.data_dir, s.job_manager
+
+
+def _validate_id(book_id: str) -> str:
+    try:
+        return store.validate_id(book_id)
+    except ValueError:
+        raise HTTPException(400, "非法 ID") from None
 
 
 def _book_kwargs(meta: dict) -> dict:
@@ -40,7 +49,11 @@ async def upload_book(request: Request, file: UploadFile):
     except Exception:
         shutil.rmtree(bdir, ignore_errors=True)
         raise HTTPException(400, "仅支持 PDF 文件")
-    meta.update({"book_id": book_id, "status": "uploaded", "toc": []})
+    meta.update({"book_id": book_id, "status": "uploaded", "toc": [],
+                 "created_at": datetime.now(timezone.utc).isoformat()})
+    # 元数据无标题时回退到原始文件名（不再显示 source.pdf 的 stem "source"）
+    if not meta.get("title") or meta["title"] == dest.stem:
+        meta["title"] = Path(file.filename or "book").stem
     store.save_json(bdir / "meta.json", meta)
     return Book(**_book_kwargs(meta), chapter_count=0)
 
@@ -55,12 +68,14 @@ async def list_books(request: Request):
         meta = store.load_json(bdir / "meta.json", {})
         chapters = store.load_json(bdir / "chapters.json", {"chapters": []})["chapters"]
         books.append(Book(**_book_kwargs(meta), chapter_count=len(chapters)))
+    books.sort(key=lambda b: b.created_at or "", reverse=True)
     return books
 
 
 @router.get("/{book_id}", response_model=BookDetail)
 async def get_book(request: Request, book_id: str):
     data_dir, _ = _ctx(request)
+    book_id = _validate_id(book_id)
     bdir = store.book_dir(data_dir, book_id)
     if not bdir.exists():
         raise HTTPException(404, "书籍不存在")
@@ -76,6 +91,7 @@ async def get_book(request: Request, book_id: str):
 @router.delete("/{book_id}")
 async def delete_book(request: Request, book_id: str):
     data_dir, _ = _ctx(request)
+    book_id = _validate_id(book_id)
     bdir = store.book_dir(data_dir, book_id).resolve()
     root = (data_dir / "books").resolve()
     if not bdir.is_relative_to(root):
@@ -92,18 +108,22 @@ async def start_parse(request: Request, book_id: str):
 
 @router.post("/{book_id}/rewrite", response_model=JobInfo)
 async def start_rewrite(request: Request, book_id: str):
-    return await _start(request, "rewrite", book_id)
+    return await _start(request, "rewrite", book_id, require_parsed=True)
 
 
 @router.post("/{book_id}/synthesize", response_model=JobInfo)
 async def start_synthesize(request: Request, book_id: str):
-    return await _start(request, "synthesize", book_id)
+    return await _start(request, "synthesize", book_id, require_parsed=True)
 
 
-async def _start(request: Request, job_type: str, book_id: str):
+async def _start(request: Request, job_type: str, book_id: str, *,
+                   require_parsed: bool = False):
     data_dir, jm = _ctx(request)
+    book_id = _validate_id(book_id)
     bdir = store.book_dir(data_dir, book_id)
     if not bdir.exists():
         raise HTTPException(404, "书籍不存在")
+    if require_parsed and not (bdir / "chapters.json").exists():
+        raise HTTPException(400, "请先解析章节")
     jid = jm.start(job_type, book_id)
     return JobInfo(**jm.get_job(jid))

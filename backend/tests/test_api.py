@@ -43,8 +43,9 @@ async def test_upload_list_detail(client):
     r = await client.get("/api/books")
     assert len(r.json()) == 1
     r = await client.get(f"/api/books/{book['book_id']}")
-    # 上传文件被保存为 source.pdf，extract_meta 无标题时回退为文件名 stem
-    assert r.json()["title"] == "source"
+    # 上传文件被保存为 source.pdf，但 title 回退用原始文件名 stem（"book"）
+    assert r.json()["title"] == "book"
+    assert r.json()["created_at"] != ""
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,7 @@ async def test_parse_then_edit_then_rebuild(client, tmp_path):
     await _wait(client, job_id)
     detail = (await client.get(f"/api/books/{book['book_id']}")).json()
     assert detail["status"] == "parsed"
+    assert detail["title"] == "book"  # 解析后仍保留原始文件名标题
     assert len(detail["chapters"]) == 1
     ch = detail["chapters"][0]["id"]
     # 编辑 speech.md
@@ -143,3 +145,122 @@ async def _wait(client, job_id: str, timeout: float = 30.0):
             return
         await asyncio.sleep(0.05)
     raise AssertionError("任务超时")
+
+@pytest.mark.asyncio
+async def test_traversal_ids_rejected(client, tmp_path):
+    """非法 book_id/chapter_id 在端点入口被 validate_id 拒绝，且不产生/不读取越界文件。"""
+    before = {p.name for p in tmp_path.iterdir()}
+    # 白名单外的 ID（Windows 反斜杠穿越、编码点号、点号）→ 400
+    for url in [
+        "/api/books/..%5C..%5Cetc",
+        "/api/books/..%2E%2E%5Cetc",
+        "/api/books/..\\..\\etc",
+        "/api/books/a%2Eb",
+    ]:
+        r = await client.get(url)
+        assert r.status_code == 400, (url, r.text)
+        assert r.json()["detail"] == "非法 ID"
+    # PUT speech.md 的 book_id 穿越 → 400
+    r = await client.put("/api/books/..%5C..%5Cetc/chapters/x/speech.md",
+                         content="x", headers={"Content-Type": "text/plain"})
+    assert r.status_code == 400
+    # chapter_id 穿越（audio / speech.md）→ 400
+    for url in [
+        "/api/books/b1/chapters/..%5C..%5Cmeta.json/audio",
+        "/api/books/b1/chapters/..%2E%2E%5Cmeta.json/speech.md",
+    ]:
+        r = await client.get(url)
+        assert r.status_code == 400, (url, r.text)
+    # %2F 与裸 .. 会被 httpx/Starlette 在路由层规范化拦截（404），同样不得越界
+    for url in [
+        "/api/books/..",
+        "/api/books/..%2F..%2Fetc",
+        "/api/books/b1/chapters/..%2F..%2Fmeta.json/audio",
+    ]:
+        r = await client.get(url)
+        assert r.status_code in (400, 404), (url, r.text)
+    # 未产生/未读取越界文件：data 目录内容不变，books 下无任何书籍目录
+    assert {p.name for p in tmp_path.iterdir()} == before
+    assert list((tmp_path / "books").iterdir()) == []
+    assert not store.book_dir(tmp_path, "b1").exists()
+
+
+@pytest.mark.asyncio
+async def test_rewrite_synthesize_require_parse(client):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    # 未解析时 rewrite / synthesize → 400 "请先解析章节"
+    for ep in ("rewrite", "synthesize"):
+        r = await client.post(f"/api/books/{book['book_id']}/{ep}")
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == "请先解析章节"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_unknown_chapter_404(client):
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    r = await client.post(f"/api/books/{book['book_id']}/chapters/ghost/rebuild")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "章节不存在"
+
+
+@pytest.mark.asyncio
+async def test_get_speech_missing_book_404(client):
+    r = await client.get("/api/books/nope/chapters/x/speech.md")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "书籍不存在"
+
+
+@pytest.mark.asyncio
+async def test_list_books_sorted_by_created_at_desc(client, tmp_path):
+    import asyncio
+    r = await client.post("/api/books", files={
+        "file": ("a.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    first = r.json()["book_id"]
+    await asyncio.sleep(0.01)
+    r = await client.post("/api/books", files={
+        "file": ("b.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    second = r.json()["book_id"]
+    books = (await client.get("/api/books")).json()
+    assert [b["book_id"] for b in books] == [second, first]
+    # 无 created_at 的旧书籍排在最后
+    old = store.book_dir(tmp_path, "old")
+    old.mkdir(parents=True)
+    store.save_json(old / "meta.json", {"book_id": "old", "title": "旧书",
+                                        "author": "", "page_count": 1})
+    books = (await client.get("/api/books")).json()
+    assert [b["book_id"] for b in books] == [second, first, "old"]
+
+
+
+
+@pytest.mark.asyncio
+async def test_tts_adapter_closed_after_lists(tmp_path):
+    from app.config import Settings
+    from app.main import create_app
+
+    class _Adapter:
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def list_models(self) -> list[dict]:
+            return [{"name": "m", "type": "custom"}]
+
+        async def list_speakers(self) -> list[dict]:
+            return [{"name": "s"}]
+
+        async def aclose(self) -> None:
+            self.closed += 1
+
+    adapter = _Adapter()
+    app = create_app(Settings(data_dir=tmp_path))
+    async with app.router.lifespan_context(app):
+        app.state.build_tts_adapter = lambda: adapter
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://test") as c:
+            assert (await c.get("/api/tts/models")).status_code == 200
+            assert (await c.get("/api/tts/speakers")).status_code == 200
+    assert adapter.closed == 2

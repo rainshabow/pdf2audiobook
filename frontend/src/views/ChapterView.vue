@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import * as api from "../api/client";
 import ChapterEditor from "../components/ChapterEditor.vue";
 import AudioPlayer from "../components/AudioPlayer.vue";
+import { waitForJob } from "../utils/jobs";
 
 const route = useRoute();
 const bookId = route.params.bookId as string;
@@ -38,13 +39,7 @@ async function rebuild() {
   error.value = "";
   try {
     const job = await api.rebuildChapter(bookId, chapterId);
-    while (true) {
-      await new Promise((r) => setTimeout(r, 1500));
-      const jobs = await api.listJobs();
-      const cur = jobs.find((j) => j.id === job.id);
-      if (!cur || cur.status === "done") break;
-      if (cur.status === "failed" || cur.status === "cancelled") throw new Error(cur.error ?? cur.status);
-    }
+    await waitForJob(job.id);
     audioVersion.value++;
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);

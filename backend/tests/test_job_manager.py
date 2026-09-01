@@ -58,6 +58,22 @@ def _make_pdf(path: Path) -> None:
     doc.close()
 
 
+def _make_pdf_with_level2(path: Path) -> None:
+    """含 level-2 TOC 的多页 PDF：第一章(1-3 页) 下有两个二级标题。"""
+    doc = fitz.open()
+    for text in ["第一章 开始", "1.1 子节一", "1.2 子节二", "第二章 结束"]:
+        page = doc.new_page()
+        page.insert_text((72, 72), text, fontsize=18)
+    doc.set_toc([
+        [1, "第一章 开始", 1],
+        [2, "1.1 子节一", 2],
+        [2, "1.2 子节二", 3],
+        [1, "第二章 结束", 4],
+    ])
+    doc.save(str(path))
+    doc.close()
+
+
 def _make_book(data_dir: Path, book_id: str, with_speech: bool = True) -> None:
     bdir = store.book_dir(data_dir, book_id)
     (bdir / "chapters" / "ch-001").mkdir(parents=True)
@@ -220,3 +236,49 @@ async def _wait_done(jm: job_manager.JobManager, jid: str, timeout: float = 30.0
             return job
         await asyncio.sleep(0.05)
     raise AssertionError(f"任务未在 {timeout}s 内结束: {jm.get_job(jid)}")
+
+
+@pytest.mark.asyncio
+async def test_parse_job_splits_oversize_by_level2(data_dir):
+    """超长章节按 TOC 二级标题拆分：chapters.json 出现 ch-001-1/ch-001-2 子章节。"""
+    pdf = data_dir / "book.pdf"
+    _make_pdf_with_level2(pdf)
+    bdir = store.book_dir(data_dir, "b9")
+    bdir.mkdir(parents=True)
+    (bdir / "source.pdf").write_bytes(pdf.read_bytes())
+
+    ss = SettingsStore(data_dir)
+    ss.save(RuntimeSettings(chapter_low_chars=1, chapter_high_chars=1))
+    jm = job_manager.JobManager(data_dir, ss)
+    jm.start_worker()
+    try:
+        jid = jm.start("parse", "b9")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        chapters = store.load_json(bdir / "chapters.json", {})["chapters"]
+        ids = [c["id"] for c in chapters]
+        assert "ch-001-1" in ids
+        assert "ch-001-2" in ids
+        sub = next(c for c in chapters if c["id"] == "ch-001-1")
+        assert sub["page_start"] == 2
+        assert sub["page_end"] == 2
+        assert (bdir / "chapters" / "ch-001-1" / "source.md").exists()
+        assert (bdir / "chapters" / "ch-001-2" / "source.md").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_empty_speech_fails_with_clear_error(data_dir):
+    _make_book(data_dir, "b10")
+    ch = store.chapter_dir(data_dir, "b10", "ch-001")
+    (ch / "speech.md").write_text("", encoding="utf-8")
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b10")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "failed"
+        assert "本章无内容可合成" in job["error"]
+    finally:
+        await jm.shutdown()
