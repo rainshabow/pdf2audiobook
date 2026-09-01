@@ -19,13 +19,11 @@ onMounted(async () => {
   if (store.settings) Object.assign(form, store.settings);
   await refreshLists();
 });
-async function onEngineChange(e: Event) {
-  const next = (e.target as HTMLSelectElement).value;
-  if (next !== form.tts_engine) {
-    form.tts_engine = next;
-    form.tts_model = "";
-    form.tts_speaker = null;
-  }
+async function onEngineChange() {
+  // v-model 已将 form.tts_engine 更新为新值，这里无条件重置模型/声音，
+  // 避免旧引擎的模型名或声音残留到新引擎。
+  form.tts_model = "";
+  form.tts_speaker = null;
   await refreshLists();
 }
 async function refreshLists() {
@@ -40,9 +38,14 @@ async function refreshLists() {
   }
 }
 async function save() {
-  await store.save({ ...form });
-  saved.value = true;
-  setTimeout(() => (saved.value = false), 2000);
+  listError.value = "";
+  try {
+    await store.save({ ...form });
+    saved.value = true;
+    setTimeout(() => (saved.value = false), 2000);
+  } catch (e: any) {
+    listError.value = "保存设置失败: " + (e?.response?.data?.detail ?? String(e));
+  }
 }
 </script>
 
