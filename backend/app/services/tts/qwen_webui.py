@@ -13,7 +13,9 @@ class QwenWebUIAdapter(TTSAdapter):
     def __init__(self, base_url: str, model: str, timeout: float = 3600.0):
         self._base = base_url.rstrip("/")
         self._model = model
-        self._client = httpx.AsyncClient(timeout=timeout)
+        # trust_env=False：本机引擎不走系统代理（Windows 开代理时会把 127.0.0.1
+        # 也交给代理导致 502），本地服务必须直连。
+        self._client = httpx.AsyncClient(timeout=timeout, trust_env=False)
 
     async def _get_list(self, endpoint: str) -> dict:
         """GET 列表接口；引擎离线或模型未加载（500）时返回空结果而非抛错。"""

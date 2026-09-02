@@ -106,6 +106,56 @@ async def test_settings_and_tts_lists(client):
 
 
 @pytest.mark.asyncio
+async def test_tts_preview_endpoint(client):
+    # mock 引擎默认即可合成试听音频
+    r = await client.get("/api/tts/preview",
+                         params={"engine": "mock", "model": "m", "voice": "测试音色"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("audio/wav")
+    assert len(r.content) > 1000
+
+    # 引擎/模型参数透传给 build_tts_adapter（预览未保存的 mimo 音色）
+    captured = {}
+
+    class _Stub:
+        async def synthesize(self, text, **kwargs):
+            captured["text"] = text
+            captured["kwargs"] = kwargs
+            from app.services.tts.base import AudioResult
+            return AudioResult(data=b"RIFF-test", duration=1.0, format="wav")
+
+        async def aclose(self):
+            pass
+
+    def factory(engine=None, model=None):
+        captured["engine"] = engine
+        captured["model"] = model
+        return _Stub()
+
+    client.app.state.build_tts_adapter = factory
+    r = await client.get("/api/tts/preview",
+                         params={"engine": "mimo", "model": "mimo-v2.5-tts", "voice": "冰糖"})
+    assert r.status_code == 200
+    assert captured["engine"] == "mimo"
+    assert captured["model"] == "mimo-v2.5-tts"
+    assert captured["text"] == "你好，世界"
+    assert captured["kwargs"]["voice"] == "冰糖"
+
+    # 引擎失败（离线/云端错误）→ 502 且携带错误详情
+    class _Fail:
+        async def synthesize(self, text, **kwargs):
+            raise RuntimeError("引擎离线")
+
+        async def aclose(self):
+            pass
+
+    client.app.state.build_tts_adapter = lambda engine=None, model=None: _Fail()
+    r = await client.get("/api/tts/preview", params={"engine": "mimo"})
+    assert r.status_code == 502
+    assert "引擎离线" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_delete_book(client, tmp_path):
     r = await client.post("/api/books", files={
         "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})

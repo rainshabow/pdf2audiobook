@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import * as api from "../api/client";
 import { useSettingsStore } from "../stores/settings";
 
@@ -20,6 +20,52 @@ const hint = ref("");
 const loadingModel = ref(false);
 const engineRunning = ref(false);
 const engineBusy = ref(false);
+const previewBusy = ref<string | null>(null);
+let previewAudio: HTMLAudioElement | null = null;
+let previewObjectUrl: string | null = null;
+
+// 仅 qwen/mimo 的预置音色提供逐音色试听（voicedesign 无预置音色）
+const canPreviewVoices = computed(() =>
+  ["qwen_webui", "mimo"].includes(form.tts_engine)
+  && form.tts_model !== "mimo-v2.5-tts-voicedesign"
+  && speakers.value.length > 0);
+
+function previewModelFor(engine: string): string {
+  if (engine === "mimo") return "mimo-v2.5-tts"; // 预置音色仅属于该模型
+  if (form.tts_model) return form.tts_model;
+  return models.value[0]?.name ?? "";
+}
+
+async function previewVoice(voice: string) {
+  if (previewBusy.value) return;
+  listError.value = "";
+  previewBusy.value = voice;
+  try {
+    const model = previewModelFor(form.tts_engine);
+    if (!model) throw new Error("请先选择模型");
+    const blob = await api.previewTTS(form.tts_engine, model, voice);
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(blob);
+    if (previewAudio) {
+      previewAudio.pause();
+      previewAudio.src = "";
+    }
+    previewAudio = new Audio(previewObjectUrl);
+    await previewAudio.play();
+  } catch (e: any) {
+    let detail = e?.response?.data?.detail ?? String(e);
+    const data = e?.response?.data;
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text();
+        try { detail = JSON.parse(text)?.detail ?? text; } catch { detail = text || detail; }
+      } catch { /* 保持默认错误 */ }
+    }
+    listError.value = "试听失败: " + detail;
+  } finally {
+    previewBusy.value = null;
+  }
+}
 
 onMounted(async () => {
   await store.load();
@@ -160,6 +206,15 @@ async function save() {
         <option v-for="s in speakers" :key="s.name" :value="s.name">{{ s.name }}</option>
       </select>
     </label>
+    <div v-if="canPreviewVoices" class="voice-previews">
+      <span class="vp-title">音色试听（你好，世界）</span>
+      <div v-for="s in speakers" :key="s.name" class="voice-row">
+        <button type="button" class="vp-name" :class="{ active: form.tts_speaker === s.name }" @click="form.tts_speaker = s.name">{{ s.name }}</button>
+        <button type="button" class="vp-play" :disabled="previewBusy !== null" @click="previewVoice(s.name)">
+          {{ previewBusy === s.name ? '试听中…' : '▶ 试听' }}
+        </button>
+      </div>
+    </div>
     <label>合成模式
       <select v-model="form.tts_mode">
         <option value="custom">CustomVoice（选声音）</option>
@@ -204,6 +259,13 @@ label { display: block; margin-bottom: 10px; }
 .ok { color: #080; margin-left: 8px; }
 .hint { color: #b26a00; background: #fff4e0; padding: 6px 10px; border-radius: 6px; }
 .row { margin: 4px 0 10px; display: flex; gap: 10px; align-items: center; }
+.voice-previews { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: -2px 0 12px; padding: 8px; background: #fafafa; border: 1px solid #eee; border-radius: 8px; }
+.vp-title { flex-basis: 100%; font-size: 12px; color: #777; }
+.voice-row { display: flex; align-items: center; gap: 6px; }
+.vp-name { border: 1px solid #ccc; background: #fff; border-radius: 14px; padding: 2px 10px; cursor: pointer; }
+.vp-name.active { background: #dbeafe; border-color: #3b82f6; }
+.vp-play { border: 1px solid #ccc; background: #fff; border-radius: 14px; padding: 2px 10px; cursor: pointer; }
+.vp-play:disabled { opacity: .6; cursor: default; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: #c00; display: inline-block; }
 .dot[data-on='true'] { background: #080; }
 .tip { color: #888; font-size: 12px; }

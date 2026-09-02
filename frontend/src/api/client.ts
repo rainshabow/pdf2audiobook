@@ -108,6 +108,16 @@ export async function uploadCloneAudio(file: File): Promise<{ path: string }> {
   fd.append("file", file);
   return (await api.post("/settings/clone-audio", fd)).data;
 }
+export async function previewTTS(
+  engine: string, model: string, voice: string,
+): Promise<Blob> {
+  // 云端/本地首次加载可能较慢，放宽到 10 分钟
+  return (await api.get("/tts/preview", {
+    params: { engine, model, voice },
+    responseType: "blob",
+    timeout: 600000,
+  })).data as Blob;
+}
 export async function listTTSModels(engine?: string): Promise<Array<{ name: string; type: string }>> {
   return (await api.get("/tts/models", { params: engine ? { engine } : undefined })).data;
 }

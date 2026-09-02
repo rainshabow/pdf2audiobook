@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 
 from app.config import RuntimeSettings
 from app.models import SettingsView, TTSModelInfo, TTSSpeakerInfo
@@ -43,6 +43,25 @@ async def upload_clone_audio(request: Request, file: UploadFile):
     dest = data_dir / "clone_ref_audio.wav"
     dest.write_bytes(await file.read())
     return {"path": "clone_ref_audio.wav"}
+
+
+@router.get("/tts/preview")
+async def preview_tts(request: Request, engine: str | None = None,
+                      model: str | None = None, voice: str | None = None):
+    """按引擎/模型/音色合成一句固定试听文本（“你好，世界”）并返回音频。"""
+    adapter = request.app.state.build_tts_adapter(engine=engine, model=model)
+    try:
+        try:
+            res = await adapter.synthesize("你好，世界", voice=voice)
+        except Exception as exc:  # 引擎离线、未加载模型或云端错误
+            hint = "（请确认 qwen-tts-webui 已启动并已加载模型）" if engine == "qwen_webui" else ""
+            raise HTTPException(status_code=502,
+                                detail=f"试听失败: {exc}{hint}") from exc
+    finally:
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()
+    return Response(content=res.data, media_type=f"audio/{res.format}")
 
 
 @router.get("/tts/models", response_model=list[TTSModelInfo])

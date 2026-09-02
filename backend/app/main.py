@@ -27,10 +27,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from dataclasses import replace
         from app.services.job_manager import _default_tts_factory
 
-        def _build_tts_adapter(engine: str | None = None):
+        def _build_tts_adapter(engine: str | None = None, model: str | None = None):
             rs = settings_store.load()
             if engine and engine != rs.tts_engine:
                 rs = replace(rs, tts_engine=engine)
+            if model and model != rs.tts_model:
+                rs = replace(rs, tts_model=model)
             return _default_tts_factory(rs, settings)
 
         app.state.build_tts_adapter = _build_tts_adapter
