@@ -16,6 +16,7 @@ const models = ref<Array<{ name: string; type: string }>>([]);
 const speakers = ref<Array<{ name: string }>>([]);
 const saved = ref(false);
 const listError = ref("");
+const hint = ref("");
 
 onMounted(async () => {
   await store.load();
@@ -34,6 +35,10 @@ async function refreshLists() {
     models.value = await api.listTTSModels();
     speakers.value = await api.listTTSSpeakers();
     listError.value = "";
+    hint.value = "";
+    if (form.tts_engine === "qwen_webui" && (!models.value.length || !speakers.value.length)) {
+      hint.value = "引擎模型尚未加载：首次执行一次合成后，模型/声音列表会自动可用；若仍为空请确认 qwen-tts-webui 已启动。";
+    }
   } catch (e: any) {
     models.value = [];
     speakers.value = [];
@@ -120,6 +125,7 @@ async function save() {
     <label>章节字数上限 <input type="number" v-model.number="form.chapter_high_chars" /></label>
     <button @click="save">保存设置</button>
     <span v-if="saved" class="ok">已保存</span>
+    <p v-if="hint" class="hint">{{ hint }}</p>
     <p v-if="listError" class="err">{{ listError }}</p>
   </div>
 </template>
@@ -127,5 +133,6 @@ async function save() {
 <style scoped>
 label { display: block; margin-bottom: 10px; }
 .ok { color: #080; margin-left: 8px; }
+.hint { color: #b26a00; background: #fff4e0; padding: 6px 10px; border-radius: 6px; }
 .err { color: #c00; }
 </style>

@@ -15,15 +15,21 @@ class QwenWebUIAdapter(TTSAdapter):
         self._model = model
         self._client = httpx.AsyncClient(timeout=timeout)
 
+    async def _get_list(self, endpoint: str) -> dict:
+        """GET 列表接口；引擎离线或模型未加载（500）时返回空结果而非抛错。"""
+        try:
+            r = await self._client.get(f"{self._base}/qwenapi/v1/{endpoint}")
+        except httpx.HTTPError:
+            return {}
+        if r.status_code >= 400:
+            return {}
+        return r.json()
+
     async def list_models(self) -> list[dict]:
-        r = await self._client.get(f"{self._base}/qwenapi/v1/models")
-        r.raise_for_status()
-        return r.json().get("models", [])
+        return (await self._get_list("models")).get("models", [])
 
     async def list_speakers(self) -> list[dict]:
-        r = await self._client.get(f"{self._base}/qwenapi/v1/speakers")
-        r.raise_for_status()
-        return r.json().get("speakers", [])
+        return (await self._get_list("speakers")).get("speakers", [])
 
     async def synthesize(self, text: str, *, voice: str | None = None,
                          speed: float = 1.0, language: str | None = None,

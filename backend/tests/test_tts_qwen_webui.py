@@ -188,3 +188,24 @@ async def test_synthesize_clone_batch_posts_voice_clone():
     assert captured["body"]["ref_audio_base64"] == base64.b64encode(ref_wav).decode()
     assert captured["body"]["ref_text"] == "参考文本"
     await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_endpoints_degrade_on_500_or_offline():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"detail": "模型未加载"})
+
+    adapter = QwenWebUIAdapter("http://127.0.0.1:7860", "m1")
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await adapter.list_models() == []
+    assert await adapter.list_speakers() == []
+
+    async def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline")
+
+    adapter2 = QwenWebUIAdapter("http://127.0.0.1:7860", "m1")
+    adapter2._client = httpx.AsyncClient(transport=httpx.MockTransport(offline))
+    assert await adapter2.list_models() == []
+    assert await adapter2.list_speakers() == []
+    await adapter._client.aclose()
+    await adapter2._client.aclose()
