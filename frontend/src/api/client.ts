@@ -23,7 +23,7 @@ export interface SettingsView {
   chapter_low_chars: number; chapter_high_chars: number;
   tts_mode: string; tts_clone_ref_audio: string | null;
   tts_clone_ref_text: string | null; tts_batch_size: number;
-  rewrite_concurrency: number;
+  tts_concurrency: number; rewrite_concurrency: number;
 }
 
 const api = axios.create({ baseURL: "/api" });
@@ -46,7 +46,7 @@ export async function startJob(
   bookId: string, type: "parse" | "rewrite" | "synthesize",
   concurrency?: number,
 ): Promise<JobInfo> {
-  const params = concurrency !== undefined && type === "rewrite"
+  const params = concurrency !== undefined && (type === "rewrite" || type === "synthesize")
     ? { concurrency } : undefined;
   return (await api.post(`/books/${bookId}/${type}`, null, { params })).data;
 }
@@ -60,8 +60,11 @@ export async function saveSpeechMd(bookId: string, ch: string, text: string): Pr
   await api.put(`/books/${bookId}/chapters/${ch}/speech.md`, text,
     { headers: { "Content-Type": "text/plain" } });
 }
-export async function rebuildChapter(bookId: string, ch: string): Promise<JobInfo> {
-  return (await api.post(`/books/${bookId}/chapters/${ch}/rebuild`)).data;
+export async function rebuildChapter(
+  bookId: string, ch: string, concurrency?: number,
+): Promise<JobInfo> {
+  const params = concurrency !== undefined ? { concurrency } : undefined;
+  return (await api.post(`/books/${bookId}/chapters/${ch}/rebuild`, null, { params })).data;
 }
 export async function rewriteChapter(
   bookId: string, ch: string, concurrency?: number,
@@ -69,8 +72,11 @@ export async function rewriteChapter(
   const params = concurrency !== undefined ? { concurrency } : undefined;
   return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`, null, { params })).data;
 }
-export async function synthesizeChapter(bookId: string, ch: string): Promise<JobInfo> {
-  return (await api.post(`/books/${bookId}/chapters/${ch}/synthesize`)).data;
+export async function synthesizeChapter(
+  bookId: string, ch: string, concurrency?: number,
+): Promise<JobInfo> {
+  const params = concurrency !== undefined ? { concurrency } : undefined;
+  return (await api.post(`/books/${bookId}/chapters/${ch}/synthesize`, null, { params })).data;
 }
 export async function restoreChapter(bookId: string, ch: string): Promise<void> {
   await api.post(`/books/${bookId}/chapters/${ch}/restore`);

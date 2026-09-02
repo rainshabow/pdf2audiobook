@@ -114,8 +114,10 @@ async def start_rewrite(request: Request, book_id: str,
 
 
 @router.post("/{book_id}/synthesize", response_model=JobInfo)
-async def start_synthesize(request: Request, book_id: str):
-    return await _start(request, "synthesize", book_id, require_parsed=True)
+async def start_synthesize(request: Request, book_id: str,
+                           concurrency: int | None = Query(None, ge=1)):
+    return await _start(request, "synthesize", book_id, require_parsed=True,
+                        concurrency=concurrency)
 
 
 async def _start(request: Request, job_type: str, book_id: str, *,

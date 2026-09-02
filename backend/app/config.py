@@ -54,6 +54,7 @@ class RuntimeSettings:
     tts_clone_ref_audio: str | None = None
     tts_clone_ref_text: str | None = None
     tts_batch_size: int = 3
+    tts_concurrency: int = 2  # 合成任务内部并发请求数（本机 qwen 建议 1-2，云端 mimo 可调大）
     rewrite_concurrency: int = 20
 
 

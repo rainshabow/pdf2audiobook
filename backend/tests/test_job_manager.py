@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import struct
 import wave
 from pathlib import Path
@@ -415,6 +416,30 @@ class _RecordingBatchTTS(MockTTSAdapter):
         return [await self.synthesize(t) for t in texts]
 
 
+class _TrackingConcurrentTTS(MockTTSAdapter):
+    """记录同一时刻并发合成请求数（模拟云端/网络时延）。"""
+
+    def __init__(self, delay: float = 0.1):
+        super().__init__()
+        self.delay = delay
+        self._lock = asyncio.Lock()
+        self.inflight = 0
+        self.max_inflight = 0
+
+    async def synthesize(self, text, *, voice=None, speed=1.0, language=None,
+                         instruct=None):
+        async with self._lock:
+            self.inflight += 1
+            self.max_inflight = max(self.max_inflight, self.inflight)
+        try:
+            await asyncio.sleep(self.delay)
+            return await super().synthesize(text, voice=voice, speed=speed,
+                                            language=language, instruct=instruct)
+        finally:
+            async with self._lock:
+                self.inflight -= 1
+
+
 @pytest.mark.asyncio
 async def test_synthesize_uses_batches(data_dir):
     _make_book(data_dir, "b30")
@@ -435,6 +460,35 @@ async def test_synthesize_uses_batches(data_dir):
         assert job["status"] == "done", job
         # 5 句 / 批 2 → 3 次批量调用
         assert adapter.batch_calls == 3
+        assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_concurrency_parallel_batches(data_dir):
+    _make_book(data_dir, "b40")
+    ch = store.chapter_dir(data_dir, "b40", "ch-001")
+    # 8 个分片，批大小 1 → 8 个独立请求，并发上限 4
+    (ch / "speech.md").write_text(
+        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(8)),
+        encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_batch_size = 1
+    rs.tts_concurrency = 1  # 任务级 concurrency=4 应覆盖默认值
+    ss.save(rs)
+
+    adapter = _TrackingConcurrentTTS(delay=0.1)
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b40", concurrency=4)
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        snap = json.loads(jm.get_job(jid)["settings_snapshot"])
+        assert snap["tts_concurrency"] == 4
+        assert adapter.max_inflight == 4
         assert (ch / "audio.wav").exists()
     finally:
         await jm.shutdown()

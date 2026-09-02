@@ -69,7 +69,10 @@ class JobManager:
         jid = store.new_book_id()
         rs = self._settings_store.load()
         snap = _rs_to_dict(rs)
-        snap["rewrite_concurrency"] = concurrency or rs.rewrite_concurrency
+        if job_type == "rewrite":
+            snap["rewrite_concurrency"] = concurrency or rs.rewrite_concurrency
+        elif self._lane(job_type) == "tts":
+            snap["tts_concurrency"] = concurrency or rs.tts_concurrency
         self._db.create_job(jid, book_id, chapter_id, job_type,
                             json.dumps(snap, ensure_ascii=False))
         queue = self._queue_tts if self._lane(job_type) == "tts" else self._queue_llm
@@ -196,6 +199,12 @@ class JobManager:
                                 job_id: str | None = None) -> None:
         chapters = self._chapters(book_id, chapter_id)
         rs = self._settings_store.load()
+        job = self._db.get_job(job_id or "") or {}
+        try:
+            snap = json.loads(job.get("settings_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        concurrency = max(1, int(snap.get("tts_concurrency") or rs.tts_concurrency))
         adapter = self._tts_factory(rs, self._settings)
         self._current_adapter["tts"] = adapter
         try:
@@ -204,7 +213,9 @@ class JobManager:
                 speech_path = ch_dir / "speech.md"
                 if not speech_path.exists():
                     raise FileNotFoundError(f"缺少 speech.md: {speech_path}")
-                segments = await self._synthesize_chapter(adapter, ch_dir, speech_path, rs, i, len(chapters), job_id)
+                segments = await self._synthesize_chapter(
+                    adapter, ch_dir, speech_path, rs, i, len(chapters), job_id,
+                    concurrency=concurrency)
                 ch["status"] = "synthesized"
                 ch["audio_duration"] = round(sum(s["end"] - s["start"] for s in segments), 3)
                 store.save_json(ch_dir / "status.json", ch)
@@ -217,7 +228,8 @@ class JobManager:
     async def _synthesize_chapter(self, adapter: TTSAdapter, ch_dir: Path,
                                   speech_path: Path, rs: RuntimeSettings,
                                   ch_idx: int, total: int,
-                                  job_id: str | None = None) -> list[dict]:
+                                  job_id: str | None = None,
+                                  concurrency: int = 1) -> list[dict]:
         text = speech_path.read_text(encoding="utf-8")
         parts = audio.split_speech_text(text, max_chars=500)
         if not parts:
@@ -243,32 +255,69 @@ class JobManager:
             if not ref_path.exists():
                 raise FileNotFoundError(f"克隆参考音频不存在: {ref_path}")
             ref_bytes = ref_path.read_bytes()
-        done_count = len(items) - len(missing)
-        for b in range(0, len(missing), batch_size):
-            await self._maybe_cancel(job_id)
-            group = missing[b:b + batch_size]
-            texts = [it["text"] for _, it in group]
-            if ref_bytes is not None:
-                results = await adapter.synthesize_clone_batch(
-                    texts, ref_audio=ref_bytes, ref_text=rs.tts_clone_ref_text)
-            else:
-                results = await adapter.synthesize_batch(
-                    texts, voice=rs.tts_speaker, instruct=rs.tts_instruct)
-            if len(results) != len(group):
-                raise RuntimeError(f"引擎返回音频数 {len(results)} != 请求数 {len(group)}")
-            # 批次开始即推进（按已提交句数计），长批次时进度不会停留在 0%
-            attempted = done_count + len(group)
-            self._db.update_job(job_id or "",
-                                progress=(ch_idx + attempted / len(items)) / total)
-            for (_, it), res in zip(group, results):
-                it["path"].write_bytes(res.data)
-                it["duration"] = res.duration
-            done_count += len(group)
-            self._db.update_job(job_id or "",
-                                progress=(ch_idx + done_count / len(items)) / total)
         if not missing:
             self._db.update_job(job_id or "",
                                 progress=(ch_idx + 1) / total)
+        else:
+            # 合成并发：同一章节的缺失分片按批次并行提交，互不阻塞
+            concurrency = max(1, concurrency)
+            batches = [missing[b:b + batch_size]
+                       for b in range(0, len(missing), batch_size)]
+            sem = asyncio.Semaphore(concurrency)
+            abort = asyncio.Event()
+            errors: list[Exception] = []
+            done_count = len(items) - len(missing)
+            submitted = 0
+
+            async def _submit_batch(group: list[tuple[int, dict]]) -> None:
+                nonlocal done_count
+                async with sem:
+                    await self._maybe_cancel(job_id)
+                    if abort.is_set():
+                        return
+                    texts = [it["text"] for _, it in group]
+                    try:
+                        if ref_bytes is not None:
+                            results = await adapter.synthesize_clone_batch(
+                                texts, ref_audio=ref_bytes,
+                                ref_text=rs.tts_clone_ref_text)
+                        else:
+                            results = await adapter.synthesize_batch(
+                                texts, voice=rs.tts_speaker,
+                                instruct=rs.tts_instruct)
+                    except _JobCancelled:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(exc)
+                        abort.set()
+                        return
+                    if len(results) != len(group):
+                        errors.append(RuntimeError(
+                            f"引擎返回音频数 {len(results)} != 请求数 {len(group)}"))
+                        abort.set()
+                        return
+                    for (_, it), res in zip(group, results):
+                        it["path"].write_bytes(res.data)
+                        it["duration"] = res.duration
+                    done_count += len(group)
+                    self._db.update_job(
+                        job_id or "",
+                        progress=(ch_idx + done_count / len(items)) / total)
+
+            tasks = []
+            for batch in batches:
+                # 提交即按句数推进，避免长批次时进度卡在 0%
+                submitted += len(batch)
+                self._db.update_job(
+                    job_id or "",
+                    progress=(ch_idx + submitted / len(items)) / total)
+                tasks.append(asyncio.create_task(_submit_batch(batch)))
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in gathered:
+                if isinstance(res, _JobCancelled):
+                    raise res
+            if errors:
+                raise errors[0]
         segments: list[dict] = []
         cursor = 0.0
         for it in items:

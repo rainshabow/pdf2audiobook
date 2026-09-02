@@ -82,7 +82,8 @@ async def restore_chapter(request: Request, book_id: str, chapter_id: str):
 
 
 @router.post("/{chapter_id}/synthesize", response_model=JobInfo)
-async def synthesize_chapter(request: Request, book_id: str, chapter_id: str):
+async def synthesize_chapter(request: Request, book_id: str, chapter_id: str,
+                             concurrency: int | None = Query(None, ge=1)):
     data_dir = _data_dir(request)
     book_id = _validate_id(book_id)
     chapter_id = _validate_id(chapter_id)
@@ -93,7 +94,7 @@ async def synthesize_chapter(request: Request, book_id: str, chapter_id: str):
     if not any(c["id"] == chapter_id for c in chapters):
         raise HTTPException(404, "章节不存在")
     jm = request.app.state.job_manager
-    jid = jm.start("synthesize", book_id, chapter_id)
+    jid = jm.start("synthesize", book_id, chapter_id, concurrency=concurrency)
     return JobInfo(**jm.get_job(jid))
 
 
@@ -115,7 +116,8 @@ async def rewrite_chapter(request: Request, book_id: str, chapter_id: str,
 
 
 @router.post("/{chapter_id}/rebuild", response_model=JobInfo)
-async def rebuild_chapter(request: Request, book_id: str, chapter_id: str):
+async def rebuild_chapter(request: Request, book_id: str, chapter_id: str,
+                          concurrency: int | None = Query(None, ge=1)):
     data_dir = _data_dir(request)
     book_id = _validate_id(book_id)
     chapter_id = _validate_id(chapter_id)
@@ -126,7 +128,7 @@ async def rebuild_chapter(request: Request, book_id: str, chapter_id: str):
     if not any(c["id"] == chapter_id for c in chapters):
         raise HTTPException(404, "章节不存在")
     jm = request.app.state.job_manager
-    jid = jm.start("rebuild", book_id, chapter_id)
+    jid = jm.start("rebuild", book_id, chapter_id, concurrency=concurrency)
     return JobInfo(**jm.get_job(jid))
 
 

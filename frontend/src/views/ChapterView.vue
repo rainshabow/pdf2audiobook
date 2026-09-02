@@ -15,6 +15,7 @@ const synthesizing = ref(false);
 const rewriting = ref(false);
 const isSource = ref(false);
 const rewriteConcurrency = ref(20);
+const synthConcurrency = ref(2);
 const error = ref("");
 const audioVersion = ref(0);
 
@@ -83,7 +84,7 @@ async function synthesize() {
   synthesizing.value = true;
   error.value = "";
   try {
-    const job = await api.synthesizeChapter(bookId, chapterId);
+    const job = await api.synthesizeChapter(bookId, chapterId, synthConcurrency.value);
     await waitForJob(job.id);
     audioVersion.value++;
   } catch (e: any) {
@@ -106,6 +107,9 @@ async function synthesize() {
         <input type="number" v-model.number="rewriteConcurrency" min="1" max="100" />
       </label>
       <button :disabled="rewriting" @click="rewrite">改写本章</button>
+      <label class="conc">合成并发
+        <input type="number" v-model.number="synthConcurrency" min="1" max="32" />
+      </label>
       <button :disabled="synthesizing" @click="synthesize">合成本章音频</button>
       <span v-if="saved" class="ok">已保存</span>
       <span v-if="error" class="err">{{ error }}</span>

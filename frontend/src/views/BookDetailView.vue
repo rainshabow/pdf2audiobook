@@ -12,6 +12,7 @@ const books = useBooksStore();
 const busy = ref(false);
 const error = ref("");
 const rewriteConcurrency = ref(20);
+const synthConcurrency = ref(2);
 
 onMounted(async () => {
   await books.loadBook(route.params.bookId as string);
@@ -33,10 +34,9 @@ async function run(type: "parse" | "rewrite" | "synthesize") {
 
 async function startAndPoll(type: "parse" | "rewrite" | "synthesize") {
   const api = await import("../api/client");
-  const job = await api.startJob(
-    route.params.bookId as string, type,
-    type === "rewrite" ? rewriteConcurrency.value : undefined,
-  );
+  const conc = type === "rewrite" ? rewriteConcurrency.value
+    : type === "synthesize" ? synthConcurrency.value : undefined;
+  const job = await api.startJob(route.params.bookId as string, type, conc);
   await waitForJob(job.id);
 }
 
@@ -45,7 +45,8 @@ async function synthesizeChapter(ch: ChapterInfo) {
   busy.value = true;
   error.value = "";
   try {
-    const job = await api.synthesizeChapter(route.params.bookId as string, ch.id);
+    const job = await api.synthesizeChapter(
+      route.params.bookId as string, ch.id, synthConcurrency.value);
     await waitForJob(job.id);
     await books.loadBook(route.params.bookId as string);
   } catch (e: any) {
@@ -70,6 +71,9 @@ function open(ch: ChapterInfo) {
         <input type="number" v-model.number="rewriteConcurrency" min="1" max="100" />
       </label>
       <button :disabled="busy" @click="run('rewrite')">② 全部改写</button>
+      <label class="conc">合成并发
+        <input type="number" v-model.number="synthConcurrency" min="1" max="32" />
+      </label>
       <button :disabled="busy" @click="run('synthesize')">③ 全部合成</button>
       <span v-if="error" class="err">{{ error }}</span>
     </div>
