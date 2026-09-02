@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import store
-from app.api import books, chapters, jobs, settings as settings_api
+from app.api import books, chapters, engine as engine_api, jobs, settings as settings_api
 from app.config import Settings, SettingsStore
 from app.services.job_manager import JobManager
 
@@ -46,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chapters.router, prefix="/api/books/{book_id}/chapters", tags=["chapters"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
     app.include_router(settings_api.router, prefix="/api", tags=["settings"])
+    app.include_router(engine_api.router, prefix="/api/tts/service", tags=["engine"])
     return app
 
 

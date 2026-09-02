@@ -18,11 +18,14 @@ const saved = ref(false);
 const listError = ref("");
 const hint = ref("");
 const loadingModel = ref(false);
+const engineRunning = ref(false);
+const engineBusy = ref(false);
 
 onMounted(async () => {
   await store.load();
   if (store.settings) Object.assign(form, store.settings);
   await refreshLists();
+  await refreshEngineStatus();
 });
 async function onEngineChange() {
   // v-model 已将 form.tts_engine 更新为新值，这里无条件重置模型/声音，
@@ -44,6 +47,41 @@ async function refreshLists() {
     models.value = [];
     speakers.value = [];
     listError.value = "加载模型/声音列表失败: " + (e?.response?.data?.detail ?? String(e));
+  }
+}
+async function refreshEngineStatus() {
+  try {
+    const st = await api.ttsServiceStatus();
+    engineRunning.value = st.running;
+  } catch { engineRunning.value = false; }
+}
+async function startEngine() {
+  engineBusy.value = true;
+  listError.value = "";
+  try {
+    await api.ttsServiceStart();
+    await refreshEngineStatus();
+    await refreshLists();
+  } catch (e: any) {
+    listError.value = "启动引擎失败: " + (e?.response?.data?.detail ?? String(e));
+  } finally {
+    engineBusy.value = false;
+  }
+}
+async function stopEngine() {
+  if (!window.confirm("确定停止 qwen 引擎服务吗？")) return;
+  engineBusy.value = true;
+  listError.value = "";
+  try {
+    await api.ttsServiceStop();
+    await refreshEngineStatus();
+    models.value = [];
+    speakers.value = [];
+    hint.value = "引擎已停止。需要时点击「启动服务」。";
+  } catch (e: any) {
+    listError.value = "停止引擎失败: " + (e?.response?.data?.detail ?? String(e));
+  } finally {
+    engineBusy.value = false;
   }
 }
 async function loadModel() {
@@ -95,8 +133,11 @@ async function save() {
       </select>
     </label>
     <div v-if="form.tts_engine === 'qwen_webui'" class="row">
-      <button :disabled="loadingModel" @click="loadModel">{{ loadingModel ? '加载中…' : '加载模型' }}</button>
-      <span class="tip">首次使用需加载模型（约数十秒），加载后模型/声音列表即可用</span>
+      <button :disabled="engineBusy" @click="startEngine">启动服务</button>
+      <button :disabled="engineBusy" @click="stopEngine">停止服务</button>
+      <button :disabled="engineBusy || !engineRunning" @click="loadModel">{{ loadingModel ? '加载中…' : '加载模型' }}</button>
+      <span class="dot" :data-on="engineRunning"></span>
+      <span class="tip">{{ engineRunning ? '引擎运行中' : '引擎未运行' }} · 首次使用需加载模型（数十秒）</span>
     </div>
     <label>模型
       <select v-model="form.tts_model">
@@ -153,6 +194,8 @@ label { display: block; margin-bottom: 10px; }
 .ok { color: #080; margin-left: 8px; }
 .hint { color: #b26a00; background: #fff4e0; padding: 6px 10px; border-radius: 6px; }
 .row { margin: 4px 0 10px; display: flex; gap: 10px; align-items: center; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #c00; display: inline-block; }
+.dot[data-on='true'] { background: #080; }
 .tip { color: #888; font-size: 12px; }
 .err { color: #c00; }
 </style>

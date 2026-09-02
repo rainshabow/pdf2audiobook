@@ -94,6 +94,15 @@ export async function saveSettings(s: SettingsView): Promise<SettingsView> {
 export async function loadTTSModel(): Promise<void> {
   await api.post("/tts/load");
 }
+export async function ttsServiceStatus(): Promise<{ running: boolean }> {
+  return (await api.get("/tts/service/status")).data;
+}
+export async function ttsServiceStart(): Promise<{ ok: boolean }> {
+  return (await api.post("/tts/service/start")).data;
+}
+export async function ttsServiceStop(): Promise<{ ok: boolean }> {
+  return (await api.post("/tts/service/stop")).data;
+}
 export async function uploadCloneAudio(file: File): Promise<{ path: string }> {
   const fd = new FormData();
   fd.append("file", file);

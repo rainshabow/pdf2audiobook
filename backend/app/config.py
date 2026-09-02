@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-v4-flash"
     tts_engine: str = "mock"
     tts_api_url: str = "http://127.0.0.1:7860"
+    qwen_tts_dir: str = r"D:\WorkSpace\qwen-tts-webui"
+    qwen_python: str = "python"
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     tts_speaker: str | None = None
     tts_speed: float = 1.25
