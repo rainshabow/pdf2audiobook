@@ -390,7 +390,7 @@ async def test_upload_clone_audio_and_settings_fields(client, tmp_path):
     s = r.json()
     assert s["tts_mode"] == "custom"
     assert s["rewrite_concurrency"] == 20
-    assert s["tts_batch_size"] == 10
+    assert s["tts_batch_size"] == 3
     r = await client.put("/api/settings", json={
         **s, "tts_mode": "clone", "tts_clone_ref_audio": "clone_ref_audio.wav",
         "rewrite_concurrency": 8, "tts_batch_size": 5, "tts_speed": 1.25})

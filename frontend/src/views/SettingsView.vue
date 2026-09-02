@@ -10,7 +10,7 @@ const form = reactive<api.SettingsView>({
   llm_model: "deepseek-v4-flash",
   chapter_low_chars: 5000, chapter_high_chars: 15000,
   tts_mode: "custom", tts_clone_ref_audio: null, tts_clone_ref_text: null,
-  tts_batch_size: 10, rewrite_concurrency: 20,
+  tts_batch_size: 3, rewrite_concurrency: 20,
 });
 const models = ref<Array<{ name: string; type: string }>>([]);
 const speakers = ref<Array<{ name: string }>>([]);
@@ -165,7 +165,7 @@ async function save() {
         <input v-model="form.tts_clone_ref_text" placeholder="参考音频里说的内容" />
       </label>
     </template>
-    <label>合成批处理句数
+    <label>合成批处理句数（建议 1–5，句数越大单批耗时越长）
       <input type="number" v-model.number="form.tts_batch_size" min="1" max="50" />
     </label>
     <label>改写并发上限

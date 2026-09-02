@@ -51,7 +51,7 @@ class RuntimeSettings:
     tts_mode: str = "custom"  # custom | clone
     tts_clone_ref_audio: str | None = None
     tts_clone_ref_text: str | None = None
-    tts_batch_size: int = 10
+    tts_batch_size: int = 3
     rewrite_concurrency: int = 20
 
 

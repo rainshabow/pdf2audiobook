@@ -256,6 +256,10 @@ class JobManager:
                     texts, voice=rs.tts_speaker, instruct=rs.tts_instruct)
             if len(results) != len(group):
                 raise RuntimeError(f"引擎返回音频数 {len(results)} != 请求数 {len(group)}")
+            # 批次开始即推进（按已提交句数计），长批次时进度不会停留在 0%
+            attempted = done_count + len(group)
+            self._db.update_job(job_id or "",
+                                progress=(ch_idx + attempted / len(items)) / total)
             for (_, it), res in zip(group, results):
                 it["path"].write_bytes(res.data)
                 it["duration"] = res.duration

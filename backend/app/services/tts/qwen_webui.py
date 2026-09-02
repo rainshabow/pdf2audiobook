@@ -10,7 +10,7 @@ from app.services.tts.base import AudioResult, TTSAdapter
 class QwenWebUIAdapter(TTSAdapter):
     """调用本机 qwen-tts-webui 的 /qwenapi/v1/* HTTP 接口。"""
 
-    def __init__(self, base_url: str, model: str, timeout: float = 600.0):
+    def __init__(self, base_url: str, model: str, timeout: float = 3600.0):
         self._base = base_url.rstrip("/")
         self._model = model
         self._client = httpx.AsyncClient(timeout=timeout)
