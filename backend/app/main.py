@@ -24,9 +24,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings_store = settings_store
         app.state.job_manager = jm
 
+        from dataclasses import replace
         from app.services.job_manager import _default_tts_factory
-        app.state.build_tts_adapter = lambda: _default_tts_factory(
-            settings_store.load(), settings)
+
+        def _build_tts_adapter(engine: str | None = None):
+            rs = settings_store.load()
+            if engine and engine != rs.tts_engine:
+                rs = replace(rs, tts_engine=engine)
+            return _default_tts_factory(rs, settings)
+
+        app.state.build_tts_adapter = _build_tts_adapter
 
         jm.start_worker()
         try:

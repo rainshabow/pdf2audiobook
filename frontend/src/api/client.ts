@@ -108,9 +108,9 @@ export async function uploadCloneAudio(file: File): Promise<{ path: string }> {
   fd.append("file", file);
   return (await api.post("/settings/clone-audio", fd)).data;
 }
-export async function listTTSModels(): Promise<Array<{ name: string; type: string }>> {
-  return (await api.get("/tts/models")).data;
+export async function listTTSModels(engine?: string): Promise<Array<{ name: string; type: string }>> {
+  return (await api.get("/tts/models", { params: engine ? { engine } : undefined })).data;
 }
-export async function listTTSSpeakers(): Promise<Array<{ name: string }>> {
-  return (await api.get("/tts/speakers")).data;
+export async function listTTSSpeakers(engine?: string): Promise<Array<{ name: string }>> {
+  return (await api.get("/tts/speakers", { params: engine ? { engine } : undefined })).data;
 }

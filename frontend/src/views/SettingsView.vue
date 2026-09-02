@@ -25,6 +25,10 @@ onMounted(async () => {
   await store.load();
   if (store.settings) Object.assign(form, store.settings);
   await refreshLists();
+  // 保存的模型不在当前引擎列表中（例如保存时为空）时自动选择首个模型
+  if (models.value.length && !models.value.some(m => m.name === form.tts_model)) {
+    form.tts_model = models.value[0].name;
+  }
   await refreshEngineStatus();
 });
 async function onEngineChange() {
@@ -33,11 +37,15 @@ async function onEngineChange() {
   form.tts_model = "";
   form.tts_speaker = null;
   await refreshLists();
+  // 新引擎自动选择首个模型，避免空模型（mimo 首项即 mimo-v2.5-tts）
+  if (!form.tts_model && models.value.length > 0) {
+    form.tts_model = models.value[0].name;
+  }
 }
 async function refreshLists() {
   try {
-    models.value = await api.listTTSModels();
-    speakers.value = await api.listTTSSpeakers();
+    models.value = await api.listTTSModels(form.tts_engine);
+    speakers.value = await api.listTTSSpeakers(form.tts_engine);
     listError.value = "";
     hint.value = "";
     if (form.tts_engine === "qwen_webui" && (!models.value.length || !speakers.value.length)) {
@@ -130,6 +138,7 @@ async function save() {
       <select v-model="form.tts_engine" @change="onEngineChange">
         <option value="mock">mock（测试）</option>
         <option value="qwen_webui">qwen_webui（本机 Qwen3-TTS）</option>
+        <option value="mimo">mimo（云端 MiMo-TTS 2.5）</option>
       </select>
     </label>
     <div v-if="form.tts_engine === 'qwen_webui'" class="row">
@@ -139,12 +148,13 @@ async function save() {
       <span class="dot" :data-on="engineRunning"></span>
       <span class="tip">{{ engineRunning ? '引擎运行中' : '引擎未运行' }} · 首次使用需加载模型（数十秒）</span>
     </div>
+    <p v-else-if="form.tts_engine === 'mimo'" class="hint">云端 MiMo-TTS：选择模型/音色后保存即可使用；克隆音色模式会自动改用 mimo-v2.5-tts-voiceclone 并上传参考音频。</p>
     <label>模型
       <select v-model="form.tts_model">
         <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }}</option>
       </select>
     </label>
-    <label>声音
+    <label v-if="form.tts_model !== 'mimo-v2.5-tts-voicedesign'">声音
       <select v-model="form.tts_speaker">
         <option :value="null">默认</option>
         <option v-for="s in speakers" :key="s.name" :value="s.name">{{ s.name }}</option>
@@ -174,7 +184,7 @@ async function save() {
     <label>固化语速（基础语速，默认 1.25）
       <input type="number" v-model.number="form.tts_speed" step="0.1" min="0.5" max="2" />
     </label>
-    <label>朗读指示
+    <label>朗读指示<template v-if="form.tts_engine === 'mimo' && form.tts_model === 'mimo-v2.5-tts-voicedesign'">（voicedesign 模型下用作音色设计描述）</template>
       <input v-model="form.tts_instruct" placeholder="如：用温柔的语气说" />
     </label>
     <label>LLM 模型

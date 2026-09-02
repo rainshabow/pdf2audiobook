@@ -37,6 +37,16 @@
 1. 按 https://github.com/licyk/qwen-tts-webui 安装并启动（API-only）：`python launch.py --nowebui --server-name 0.0.0.0 --server-port 7860`
 2. 前端「设置」将引擎切到 `qwen_webui`，首次合成会自动下载模型
 
+## 接入云端 MiMo-TTS 2.5（无需 GPU）
+
+1. 在 `.env` 配置 `MIMO_API_KEY=sk-...`（`MIMO_BASE_URL` 默认 `https://api.xiaomimimo.com/v1`，一般无需改动）
+2. 前端「设置」将引擎切到 `mimo（云端 MiMo-TTS 2.5）`，保存后即可合成：
+   - 模型：`mimo-v2.5-tts`（预置音色）、`mimo-v2.5-tts-voicedesign`（用描述生成音色，朗读指示即设计描述）
+   - 合成模式选 Voice Clone 时自动使用 `mimo-v2.5-tts-voiceclone`，需上传参考音频（wav/mp3）
+   - 预置音色：`mimo_default`、冰糖、茉莉、苏打、白桦、Mia、Chloe、Milo、Dean
+   - 语速仍由应用按「固化语速」后处理（默认 1.25 倍）
+   - 云端接口按次计费，速度与 GPU 无关，可作为本机 qwen 引擎的换源方案
+
 ## 并发模型
 - 改写（LLM/CPU）与合成（GPU）使用**双通道并行**：两类任务可同时进行，互不阻塞
 - 同类型任务仍串行（改写之间、合成之间），避免资源争抢；改写任务内部按并发上限并行调用 LLM

@@ -344,6 +344,10 @@ def _rs_to_dict(rs: RuntimeSettings) -> dict:
 def _default_tts_factory(rs: RuntimeSettings, settings: Settings) -> TTSAdapter:
     if rs.tts_engine == "qwen_webui":
         return QwenWebUIAdapter(settings.tts_api_url, rs.tts_model)
+    if rs.tts_engine == "mimo":
+        from app.services.tts.mimo import MimoTTSAdapter
+        return MimoTTSAdapter(settings.mimo_base_url, rs.tts_model,
+                              api_key=settings.mimo_api_key)
     return MockTTSAdapter()
 
 

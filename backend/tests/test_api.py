@@ -94,6 +94,15 @@ async def test_settings_and_tts_lists(client):
     assert r.json()[0]["name"] == "mock-voice"
     r = await client.get("/api/tts/speakers")
     assert r.json()[0]["name"] == "测试音色"
+    # engine 查询参数：预览尚未保存的 mimo 引擎，且不修改已保存设置
+    r = await client.get("/api/tts/models?engine=mimo")
+    names = [m["name"] for m in r.json()]
+    assert "mimo-v2.5-tts" in names
+    assert "mimo-v2.5-tts-voiceclone" in names
+    r = await client.get("/api/tts/speakers?engine=mimo")
+    assert r.json()[0]["name"] == "mimo_default"
+    r = await client.get("/api/settings")
+    assert r.json()["tts_engine"] == "mock"
 
 
 @pytest.mark.asyncio
@@ -260,7 +269,7 @@ async def test_tts_adapter_closed_after_lists(tmp_path):
     adapter = _Adapter()
     app = create_app(Settings(data_dir=tmp_path))
     async with app.router.lifespan_context(app):
-        app.state.build_tts_adapter = lambda: adapter
+        app.state.build_tts_adapter = lambda engine=None: adapter
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url="http://test") as c:
             assert (await c.get("/api/tts/models")).status_code == 200

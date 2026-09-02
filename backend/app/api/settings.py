@@ -46,8 +46,9 @@ async def upload_clone_audio(request: Request, file: UploadFile):
 
 
 @router.get("/tts/models", response_model=list[TTSModelInfo])
-async def list_tts_models(request: Request):
-    adapter = request.app.state.build_tts_adapter()
+async def list_tts_models(request: Request, engine: str | None = None):
+    # engine 用于预览尚未保存的引擎（如切到 mimo 时先看模型列表）
+    adapter = request.app.state.build_tts_adapter(engine=engine)
     try:
         return [TTSModelInfo(**m) for m in await adapter.list_models()]
     finally:
@@ -57,8 +58,8 @@ async def list_tts_models(request: Request):
 
 
 @router.get("/tts/speakers", response_model=list[TTSSpeakerInfo])
-async def list_tts_speakers(request: Request):
-    adapter = request.app.state.build_tts_adapter()
+async def list_tts_speakers(request: Request, engine: str | None = None):
+    adapter = request.app.state.build_tts_adapter(engine=engine)
     try:
         speakers = await adapter.list_speakers()
         if speakers and isinstance(speakers[0], str):
