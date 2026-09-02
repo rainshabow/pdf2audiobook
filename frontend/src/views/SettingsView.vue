@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import * as api from "../api/client";
 import { useSettingsStore } from "../stores/settings";
+
+// KeepAlive 按组件名缓存本页（App.vue include="SettingsView"）
+defineOptions({ name: "SettingsView" });
 
 const store = useSettingsStore();
 const form = reactive<api.SettingsView>({
@@ -21,6 +25,8 @@ const loadingModel = ref(false);
 const engineRunning = ref(false);
 const engineBusy = ref(false);
 const previewBusy = ref<string | null>(null);
+const dirty = ref(false);
+let initialized = false;
 let previewAudio: HTMLAudioElement | null = null;
 let previewObjectUrl: string | null = null;
 
@@ -70,12 +76,46 @@ async function previewVoice(voice: string) {
 onMounted(async () => {
   await store.load();
   if (store.settings) Object.assign(form, store.settings);
+  initialized = true;
   await refreshLists();
   // 保存的模型不在当前引擎列表中（例如保存时为空）时自动选择首个模型
   if (models.value.length && !models.value.some(m => m.name === form.tts_model)) {
     form.tts_model = models.value[0].name;
   }
   await refreshEngineStatus();
+});
+
+// 表单发生任何修改都标记为未保存；离开页面时自动保存，返回时不再重新加载
+watch(form, () => {
+  if (initialized) dirty.value = true;
+}, { deep: true });
+
+onActivated(() => {
+  // 回到设置页：不重载模型/音色列表，仅刷新引擎运行状态（或引擎列表为空时补一次）
+  refreshEngineStatus();
+  if (form.tts_engine === "qwen_webui" && !models.value.length) refreshLists();
+});
+
+onDeactivated(() => {
+  // 离开页面时停止试听，避免 KeepAlive 缓存后声音在后台继续播放
+  if (previewAudio) {
+    previewAudio.pause();
+    previewAudio.src = "";
+    previewAudio = null;
+  }
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = null;
+  }
+});
+
+onBeforeRouteLeave(async () => {
+  // 未点“保存设置”直接离开时自动落盘，避免返回后看到“设置被重新加载”的假象
+  if (dirty.value) {
+    try {
+      await save(false);
+    } catch { /* 保存失败不阻塞离开，错误已展示在页面 */ }
+  }
 });
 async function onEngineChange() {
   // v-model 已将 form.tts_engine 更新为新值，这里无条件重置模型/声音，
@@ -165,14 +205,18 @@ async function onCloneAudio(e: Event) {
     input.value = "";
   }
 }
-async function save() {
+async function save(flash = true) {
   listError.value = "";
   try {
     await store.save({ ...form });
-    saved.value = true;
-    setTimeout(() => (saved.value = false), 2000);
+    dirty.value = false;
+    if (flash) {
+      saved.value = true;
+      setTimeout(() => (saved.value = false), 2000);
+    }
   } catch (e: any) {
     listError.value = "保存设置失败: " + (e?.response?.data?.detail ?? String(e));
+    throw e;
   }
 }
 </script>
@@ -250,7 +294,7 @@ async function save() {
     </label>
     <label>章节字数下限 <input type="number" v-model.number="form.chapter_low_chars" /></label>
     <label>章节字数上限 <input type="number" v-model.number="form.chapter_high_chars" /></label>
-    <button @click="save">保存设置</button>
+    <button @click="save()">保存设置</button>
     <span v-if="saved" class="ok">已保存</span>
     <p v-if="hint" class="hint">{{ hint }}</p>
     <p v-if="listError" class="err">{{ listError }}</p>

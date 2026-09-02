@@ -14,7 +14,13 @@ onMounted(() => jobs.startPolling());
       <router-link to="/settings">🛠 设置</router-link>
       <span v-if="jobs.active" class="dot">●</span>
     </header>
-    <main><router-view /></main>
+    <main>
+      <router-view v-slot="{ Component }">
+        <KeepAlive include="SettingsView">
+          <component :is="Component" />
+        </KeepAlive>
+      </router-view>
+    </main>
   </div>
 </template>
 
