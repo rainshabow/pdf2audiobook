@@ -28,6 +28,7 @@ class JobManager:
         self._queue_llm: asyncio.Queue[tuple[str, JobType, str, str | None]] = asyncio.Queue()
         self._queue_tts: asyncio.Queue[tuple[str, JobType, str, str | None]] = asyncio.Queue()
         self._cancel_flags: set[str] = set()
+        self._queued: set[str] = set()  # 已入队、尚未被 worker 取出的任务
         self._worker_tasks: list[asyncio.Task] = []
         self._current_job_id: dict[str, str | None] = {"llm": None, "tts": None}
         self._current_adapter: dict[str, TTSAdapter | None] = {"llm": None, "tts": None}
@@ -40,6 +41,9 @@ class JobManager:
 
     def start_worker(self) -> None:
         if not self._worker_tasks:
+            # 上次进程被强杀/重启后遗留的 running/pending 行不再有 worker 处理，
+            # 启动时统一置为 cancelled，避免出现“取消无效”的僵尸任务
+            self._db.cancel_stale()
             self._worker_tasks = [
                 asyncio.create_task(self._worker("llm", self._queue_llm)),
                 asyncio.create_task(self._worker("tts", self._queue_tts)),
@@ -58,6 +62,7 @@ class JobManager:
                     jid, *_ = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                self._queued.discard(jid)
                 self._db.update_job(jid, status="cancelled")
         for task in self._worker_tasks:
             task.cancel()
@@ -77,6 +82,7 @@ class JobManager:
                             json.dumps(snap, ensure_ascii=False))
         queue = self._queue_tts if self._lane(job_type) == "tts" else self._queue_llm
         queue.put_nowait((jid, job_type, book_id, chapter_id))
+        self._queued.add(jid)
         return jid
 
     def get_job(self, job_id: str) -> dict | None:
@@ -89,19 +95,51 @@ class JobManager:
         job = self._db.get_job(job_id)
         if job is None or job["status"] in ("done", "failed", "cancelled"):
             return  # 不存在或已终态：不加入 flags，也不触发 interrupt
-        self._cancel_flags.add(job_id)
+        # 排队中：直接从队列移除并立即置为 cancelled，无需等前一个任务结束
+        if self._dequeue(job_id):
+            self._db.update_job(job_id, status="cancelled",
+                                error="任务已取消")
+            return
         lane = self._lane(job["type"])
-        if self._current_job_id.get(lane) == job_id and self._current_adapter.get(lane) is not None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return  # 无运行事件循环时跳过 interrupt
-            loop.create_task(self._current_adapter[lane].interrupt())
+        if self._current_job_id.get(lane) == job_id:
+            self._cancel_flags.add(job_id)
+            if self._current_adapter.get(lane) is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return  # 无运行事件循环时跳过 interrupt
+                loop.create_task(self._current_adapter[lane].interrupt())
+            return
+        # 既不在队列也不在当前任务：属于被强杀进程遗留的僵尸行，
+        # 当前 worker 永远不会处理它，直接置为 cancelled
+        self._db.update_job(job_id, status="cancelled",
+                            error="服务重启，遗留任务已取消")
+
+    def _dequeue(self, job_id: str) -> bool:
+        """从两个任务队列中移除指定任务（同步执行，无 await 竞态）。"""
+        removed = False
+        for queue in (self._queue_llm, self._queue_tts):
+            kept: list = []
+            while True:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if item[0] == job_id:
+                    removed = True
+                else:
+                    kept.append(item)
+            for item in kept:
+                queue.put_nowait(item)
+        if removed:
+            self._queued.discard(job_id)
+        return removed
 
     async def _worker(self, lane: str,
                       queue: asyncio.Queue[tuple[str, JobType, str, str | None]]) -> None:
         while True:
             jid, job_type, book_id, chapter_id = await queue.get()
+            self._queued.discard(jid)
             self._current_job_id[lane] = jid
             self._current_adapter[lane] = None
             self._db.update_job(jid, status="running", error=None)
@@ -288,6 +326,9 @@ class JobManager:
                     except _JobCancelled:
                         raise
                     except Exception as exc:  # noqa: BLE001
+                        # 取消后引擎返回“任务已中断”等错误应归类为取消而非失败
+                        if job_id and job_id in self._cancel_flags:
+                            raise _JobCancelled from exc
                         errors.append(exc)
                         abort.set()
                         return

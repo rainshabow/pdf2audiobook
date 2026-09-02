@@ -220,6 +220,105 @@ async def test_cancel_running_job(data_dir):
         await jm.shutdown()
 
 
+class _InterruptedTTS(TTSAdapter):
+    """引擎在 interrupt 后返回“任务已中断”错误（模拟 qwen 被取消时的表现）。"""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def list_models(self) -> list[dict]:
+        return []
+
+    async def list_speakers(self) -> list[dict]:
+        return []
+
+    async def synthesize(self, text: str, *, voice: str | None = None,
+                         speed: float = 1.0, language: str | None = None,
+                         instruct: str | None = None) -> AudioResult:
+        self.started.set()
+        await self._release.wait()
+        raise RuntimeError("qwen-tts-webui 错误 500: 生成失败: 500: 任务已中断")
+
+    async def interrupt(self) -> None:
+        self._release.set()
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_job_interrupt_error_marks_cancelled(data_dir):
+    """取消后引擎报“任务已中断”应归类为 cancelled 而非 failed。"""
+    _make_book(data_dir, "b6b")
+    adapter = _InterruptedTTS()
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir),
+                                tts_factory=lambda rs, settings: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b6b")
+        await asyncio.wait_for(adapter.started.wait(), timeout=5)
+        jm.cancel(jid)
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "cancelled", job
+        assert "任务已中断" not in (job["error"] or "")
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_job_is_immediate(data_dir):
+    """排队中的任务被取消时直接从队列移除，无需等当前任务结束。"""
+    _make_book(data_dir, "b6c")
+    blocking = _BlockingTTS()
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir),
+                                tts_factory=lambda rs, settings: blocking)
+    jm.start_worker()
+    try:
+        jid1 = jm.start("synthesize", "b6c")
+        await asyncio.wait_for(blocking.started.wait(), timeout=5)
+        jid2 = jm.start("synthesize", "b6c")  # 排在 jid1 后面
+        assert jm.get_job(jid2)["status"] == "pending"
+        jm.cancel(jid2)
+        assert jm.get_job(jid2)["status"] == "cancelled"
+        assert jm.get_job(jid1)["status"] == "running"  # jid1 不受影响
+        await blocking.interrupt()
+        job1 = await _wait_done(jm, jid1)
+        assert job1["status"] == "done", job1
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancel_stale_running_job_marks_cancelled(data_dir):
+    """DB 中存在但不属于当前队列/任务的僵尸行：cancel 应立即置为 cancelled。"""
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jm.start_worker()
+    try:
+        jid = store.new_book_id()
+        jm._db.create_job(jid, "b-stale", None, "synthesize", "{}")
+        jm._db.update_job(jid, status="running")
+        jm.cancel(jid)
+        job = jm.get_job(jid)
+        assert job["status"] == "cancelled"
+        assert "服务重启" in (job["error"] or "")
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_startup_cancels_stale_rows(data_dir):
+    """进程重启后启动 worker 时，自动清理上次遗留的 running/pending 行。"""
+    jm1 = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jid = store.new_book_id()
+    jm1._db.create_job(jid, "b-stale2", None, "synthesize", "{}")
+    jm1._db.update_job(jid, status="running")
+
+    jm2 = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jm2.start_worker()
+    try:
+        assert jm2.get_job(jid)["status"] == "cancelled"
+    finally:
+        await jm2.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_shutdown_marks_inflight_and_queued_jobs_cancelled(data_dir):
     _make_book(data_dir, "b7")

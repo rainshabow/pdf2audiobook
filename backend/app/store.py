@@ -104,6 +104,15 @@ class JobDB:
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def cancel_stale(self) -> int:
+        """进程启动时将上次进程遗留的 running/pending 行置为 cancelled。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE jobs SET status = 'cancelled', error = '服务重启，遗留任务已取消', updated_at = ? "
+                "WHERE status IN ('pending', 'running')", (_now(),))
+            self._conn.commit()
+        return cur.rowcount
+
     def delete_job(self, job_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
