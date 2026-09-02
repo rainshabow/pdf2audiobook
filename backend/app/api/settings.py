@@ -23,6 +23,19 @@ async def put_settings(request: Request, view: SettingsView):
     return SettingsView(**rs.__dict__)
 
 
+@router.post("/tts/load")
+async def load_tts_model(request: Request):
+    """预加载 TTS 引擎模型（qwen：触发一次极短合成；mock：no-op）。"""
+    adapter = request.app.state.build_tts_adapter()
+    try:
+        await adapter.warmup()
+    finally:
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()
+    return {"ok": True}
+
+
 @router.post("/settings/clone-audio")
 async def upload_clone_audio(request: Request, file: UploadFile):
     data_dir = request.app.state.data_dir

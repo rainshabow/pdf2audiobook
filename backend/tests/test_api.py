@@ -427,3 +427,11 @@ async def test_restore_chapter_to_source(client, tmp_path):
     # 未解析书籍 → 404
     r = await client.post("/api/books/nonexistent/chapters/ch-001/restore")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_load_tts_model_endpoint(client):
+    # mock 引擎 warmup 为 no-op
+    r = await client.post("/api/tts/load")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}

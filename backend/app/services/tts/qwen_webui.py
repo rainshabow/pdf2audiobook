@@ -105,6 +105,10 @@ class QwenWebUIAdapter(TTSAdapter):
             raise RuntimeError(f"qwen-tts-webui 返回音频数 {len(data)} != 期望 {expected}")
         return [base64.b64decode(x) for x in data]
 
+    async def warmup(self) -> None:
+        """用一次极短合成触发模型加载（webui 无独立加载端点）。"""
+        await self.synthesize("加载。", voice=None, language=None, instruct="")
+
     async def interrupt(self) -> None:
         try:
             await self._client.post(f"{self._base}/qwenapi/v1/interrupt")

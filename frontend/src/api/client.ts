@@ -91,6 +91,9 @@ export async function getSettings(): Promise<SettingsView> {
 export async function saveSettings(s: SettingsView): Promise<SettingsView> {
   return (await api.put("/settings", s)).data;
 }
+export async function loadTTSModel(): Promise<void> {
+  await api.post("/tts/load");
+}
 export async function uploadCloneAudio(file: File): Promise<{ path: string }> {
   const fd = new FormData();
   fd.append("file", file);

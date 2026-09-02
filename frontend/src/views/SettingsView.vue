@@ -17,6 +17,7 @@ const speakers = ref<Array<{ name: string }>>([]);
 const saved = ref(false);
 const listError = ref("");
 const hint = ref("");
+const loadingModel = ref(false);
 
 onMounted(async () => {
   await store.load();
@@ -37,12 +38,25 @@ async function refreshLists() {
     listError.value = "";
     hint.value = "";
     if (form.tts_engine === "qwen_webui" && (!models.value.length || !speakers.value.length)) {
-      hint.value = "引擎模型尚未加载：首次执行一次合成后，模型/声音列表会自动可用；若仍为空请确认 qwen-tts-webui 已启动。";
+      hint.value = "引擎模型尚未加载：请点击上方「加载模型」；若仍为空请确认 qwen-tts-webui 已启动。";
     }
   } catch (e: any) {
     models.value = [];
     speakers.value = [];
     listError.value = "加载模型/声音列表失败: " + (e?.response?.data?.detail ?? String(e));
+  }
+}
+async function loadModel() {
+  loadingModel.value = true;
+  listError.value = "";
+  hint.value = "";
+  try {
+    await api.loadTTSModel();
+    await refreshLists();
+  } catch (e: any) {
+    listError.value = "加载模型失败: " + (e?.response?.data?.detail ?? String(e));
+  } finally {
+    loadingModel.value = false;
   }
 }
 async function onCloneAudio(e: Event) {
@@ -80,6 +94,10 @@ async function save() {
         <option value="qwen_webui">qwen_webui（本机 Qwen3-TTS）</option>
       </select>
     </label>
+    <div v-if="form.tts_engine === 'qwen_webui'" class="row">
+      <button :disabled="loadingModel" @click="loadModel">{{ loadingModel ? '加载中…' : '加载模型' }}</button>
+      <span class="tip">首次使用需加载模型（约数十秒），加载后模型/声音列表即可用</span>
+    </div>
     <label>模型
       <select v-model="form.tts_model">
         <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }}</option>
@@ -134,5 +152,7 @@ async function save() {
 label { display: block; margin-bottom: 10px; }
 .ok { color: #080; margin-left: 8px; }
 .hint { color: #b26a00; background: #fff4e0; padding: 6px 10px; border-radius: 6px; }
+.row { margin: 4px 0 10px; display: flex; gap: 10px; align-items: center; }
+.tip { color: #888; font-size: 12px; }
 .err { color: #c00; }
 </style>

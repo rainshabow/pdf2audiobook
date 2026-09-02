@@ -209,3 +209,34 @@ async def test_list_endpoints_degrade_on_500_or_offline():
     assert await adapter2.list_speakers() == []
     await adapter._client.aclose()
     await adapter2._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_warmup_triggers_synthesis():
+    import base64
+    import io
+    import math
+    import struct
+    import wave
+
+    def wav():
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+            n = 2400
+            w.writeframes(b"".join(struct.pack("<h", int(300 * math.sin(2 * math.pi * 440 * i / 24000))) for i in range(n)))
+        return buf.getvalue()
+
+    captured = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"audio_files_base64": [base64.b64encode(wav()).decode()]})
+
+    adapter = QwenWebUIAdapter("http://127.0.0.1:7860", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await adapter.warmup()
+    assert captured["body"]["text"] == "加载。"
+    assert captured["body"]["segment_gen"] is False
+    await adapter._client.aclose()

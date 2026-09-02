@@ -28,6 +28,10 @@ class TTSAdapter(ABC):
         """取消当前引擎任务；不支持时 no-op。"""
         return None
 
+    async def warmup(self) -> None:
+        """预加载模型/建立连接（默认 no-op，引擎可覆盖）。"""
+        return None
+
     async def synthesize_batch(self, texts: list[str], *, voice: str | None = None,
                                language: str | None = None,
                                instruct: str | None = None) -> list["AudioResult"]:
