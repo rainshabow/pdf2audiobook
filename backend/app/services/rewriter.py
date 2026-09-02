@@ -21,14 +21,18 @@ SYSTEM_PROMPT = """你是一名有声书口语化改写专家。任务：把书�
 
 ProgressCb = Callable[[float], Awaitable[None]]
 
+# 改写缓存版本：策略/提示词变化时递增，使旧缓存失效
+CACHE_VERSION = "v2"
+
 
 class Rewriter:
     def __init__(self, client: AsyncOpenAI, model: str, data_dir: Path,
-                 concurrency: int = 20):
+                 concurrency: int = 20, passthrough_plain: bool = False):
         self._client = client
         self._model = model
         self._data_dir = data_dir
         self._concurrency = max(1, concurrency)
+        self._passthrough_plain = passthrough_plain
 
     @staticmethod
     def needs_rewrite(text: str) -> bool:
@@ -114,18 +118,19 @@ class Rewriter:
         async def process(i: int, sec: str) -> None:
             nonlocal completed
             h = _hash(sec)
-            cached = None if h not in done else _try_load_done(ch_dir, h)
+            key = _cache_key(h)
+            cached = None if key not in done else _try_load_done(ch_dir, h)
             if cached is not None:
                 results[i] = cached
             else:
-                done.discard(h)  # 缓存缺失/为空视为未完成
-                if self.needs_rewrite(sec):
-                    result = await self._call_llm(sec)
+                done.discard(key)  # 缓存缺失/为空视为未完成
+                if self._passthrough_plain and not self.needs_rewrite(sec):
+                    result = sec  # 仅显式开启透传时才跳过 LLM
                 else:
-                    result = sec  # 纯文本直接透传，不调用 LLM
+                    result = await self._call_llm(sec)  # 默认每个分段都改写
                 async with lock:
                     _save_done(ch_dir, h, result)
-                    done.add(h)
+                    done.add(key)
                     store.save_json(checkpoint_path, {"done": sorted(done)})
                 results[i] = result
             async with lock:
@@ -170,14 +175,18 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _cache_key(h: str) -> str:
+    return f"{CACHE_VERSION}_{h}"
+
+
 def _save_done(ch_dir: Path, h: str, text: str) -> None:
     ch_dir.mkdir(parents=True, exist_ok=True)
-    (ch_dir / f".rewrite_{h}.md").write_text(text, encoding="utf-8")
+    (ch_dir / f".rewrite_{_cache_key(h)}.md").write_text(text, encoding="utf-8")
 
 
 def _try_load_done(ch_dir: Path, h: str) -> str | None:
     try:
-        text = (ch_dir / f".rewrite_{h}.md").read_text(encoding="utf-8")
+        text = (ch_dir / f".rewrite_{_cache_key(h)}.md").read_text(encoding="utf-8")
     except OSError:
         return None
     return text or None

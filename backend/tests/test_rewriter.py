@@ -83,8 +83,9 @@ async def test_rewrite_chapter_resumes_from_checkpoint(data_dir):
     sections = rewriter.Rewriter.split_sections(src)
     assert len(sections) >= 2
     h0 = hashlib.sha256(sections[0].encode("utf-8")).hexdigest()[:16]
-    (ch_dir / f".rewrite_{h0}.md").write_text("已改写第一段", encoding="utf-8")
-    store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [h0]})
+    key0 = rewriter._cache_key(h0)
+    (ch_dir / f".rewrite_{key0}.md").write_text("已改写第一段", encoding="utf-8")
+    store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [key0]})
     (ch_dir / "source.md").write_text(src, encoding="utf-8")
 
     class FakeCompletions:
@@ -188,7 +189,8 @@ async def test_rewrite_chapter_resume_with_missing_cache_regenerates(data_dir):
     sections = rewriter.Rewriter.split_sections(src)
     assert len(sections) == 2
     h0 = hashlib.sha256(sections[0].encode("utf-8")).hexdigest()[:16]
-    store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [h0]})  # 缓存文件缺失
+    # 缓存文件缺失（checkpoint 记录了 v2 键但没有对应文件）
+    store.save_json(ch_dir / "rewrite_checkpoint.json", {"done": [rewriter._cache_key(h0)]})
     (ch_dir / "source.md").write_text(src, encoding="utf-8")
 
     class FakeCompletions:
@@ -253,13 +255,13 @@ async def test_rewrite_skips_plain_text_sections(data_dir):
             self.chat = FakeChat()
 
     fake = FakeClient()
-    rw = rewriter.Rewriter(fake, "m", data_dir)  # type: ignore[arg-type]
+    rw = rewriter.Rewriter(fake, "m", data_dir, passthrough_plain=True)  # type: ignore[arg-type]
 
     async def noop(p):
         pass
 
     await rw.rewrite_chapter("b1", {"id": "ch-plain"}, noop)
-    assert len(fake.chat.completions.calls) == 1  # 只有表格段调用 LLM
+    assert len(fake.chat.completions.calls) == 1  # 只有表格段调用 LLM（透传开启时）
     text = (ch_dir / "speech.md").read_text(encoding="utf-8")
     assert "这是纯文本第一段。" in text
     assert "这是纯文本第二段。" in text
@@ -310,6 +312,46 @@ async def test_rewrite_concurrency_bounds_parallel_calls(data_dir):
         pass
 
     await rw.rewrite_chapter("b1", {"id": "ch-conc"}, noop)
-    assert len(fake.chat.completions.calls) == 8
+    # 全部完成且并发被限制在 3（重复尾段会命中缓存去重，不重复调用 LLM）
     assert peak <= 3
     assert peak >= 2  # 确实发生过并发
+    text = (ch_dir / "speech.md").read_text(encoding="utf-8")
+    assert text.count("改写结果") == len(rewriter.Rewriter.split_sections(src))
+
+
+@pytest.mark.asyncio
+async def test_rewrite_all_sections_by_default(data_dir):
+    """默认关闭透传：纯文本分段也调用 LLM。"""
+    from app import store
+    ch_dir = store.chapter_dir(data_dir, "b1", "ch-all")
+    ch_dir.mkdir(parents=True)
+    (ch_dir / "source.md").write_text(
+        "这是纯文本第一段。\n\n这是纯文本第二段。\n\n表格：\n|A|B|\n|1|2|",
+        encoding="utf-8")
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = []
+
+        async def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return type("R", (), {"choices": [type("C", (), {"message": type(
+                "M", (), {"content": "改写后内容"})()})]})()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    fake = FakeClient()
+    rw = rewriter.Rewriter(fake, "m", data_dir)  # type: ignore[arg-type]
+    sections = rewriter.Rewriter.split_sections(
+        (ch_dir / "source.md").read_text(encoding="utf-8"))
+    assert len(sections) >= 2
+
+    async def noop(p):
+        pass
+
+    await rw.rewrite_chapter("b1", {"id": "ch-all"}, noop)
+    assert len(fake.chat.completions.calls) == len(sections)  # 每段都调用 LLM
