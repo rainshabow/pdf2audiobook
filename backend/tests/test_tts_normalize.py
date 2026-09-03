@@ -27,6 +27,15 @@ def test_plain_words_and_single_letters_unchanged():
     assert normalize_for_tts("这是普通文本 123。") == "这是普通文本 123。"
 
 
+def test_longer_than_six_letters_pass_through():
+    # >6 字母直接放行（即使含混排大写/全大写也不再展开）
+    assert normalize_for_tts("AutoGPT 与 AgentGPT") == "AutoGPT 与 AgentGPT"
+    assert normalize_for_tts("TensorFlow、PyTorch") == "TensorFlow、PyTorch"
+    assert normalize_for_tts("ABCDEFGH") == "ABCDEFGH"
+    # 6 字母及以下仍按缩写规则展开
+    assert normalize_for_tts("ABCDEF") == "A B C D E F"
+
+
 def test_idempotent():
     once = normalize_for_tts("LLM、MoE、vLLM 与 OpenAI")
     assert normalize_for_tts(once) == once

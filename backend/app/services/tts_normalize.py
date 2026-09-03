@@ -21,7 +21,13 @@ _WHITELIST = {
 
 
 def _is_abbreviation(run: str) -> bool:
-    """启发式判断缩写：全大写串，或大小写混排且含“非词首大写”（如 MoE/vLLM）。"""
+    """启发式判断缩写：全大写串，或大小写混排且含“非词首大写”（如 MoE/vLLM）。
+
+    长度 > 6 的字母串直接放行：此类多半是品牌/长专名，即使偶尔读错，
+    逐字母朗读的听感也很差，不值得展开。
+    """
+    if len(run) > 6:
+        return False
     if run in _WHITELIST:
         return False
     if len(run) >= 2 and run.isupper():
