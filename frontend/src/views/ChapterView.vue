@@ -6,12 +6,14 @@ import ChapterEditor from "../components/ChapterEditor.vue";
 import { marked } from "marked";
 import AudioPlayer from "../components/AudioPlayer.vue";
 import { useBooksStore } from "../stores/books";
+import { useSettingsStore } from "../stores/settings";
 import { useToastStore } from "../stores/toast";
 import { waitForJob } from "../utils/jobs";
 
 const route = useRoute();
 const router = useRouter();
 const books = useBooksStore();
+const settingsStore = useSettingsStore();
 const toast = useToastStore();
 const bookId = ref(route.params.bookId as string);
 const chapterId = ref(route.params.chapterId as string);
@@ -87,6 +89,18 @@ async function loadChapter() {
   }
 }
 watch(() => [route.params.bookId, route.params.chapterId] as const, loadChapter, { immediate: true });
+
+// 参数面板默认值跟随设置页（合成并发支持 -1）
+async function syncAdvancedDefaults() {
+  if (!settingsStore.settings) {
+    try { await settingsStore.load(); } catch { /* 忽略：仍用本地默认 */ }
+  }
+  if (settingsStore.settings) {
+    rewriteConcurrency.value = settingsStore.settings.rewrite_concurrency;
+    synthConcurrency.value = settingsStore.settings.tts_concurrency;
+  }
+}
+void syncAdvancedDefaults();
 
 async function save() {
   error.value = "";
@@ -230,8 +244,8 @@ function goTo(chId: string | null) {
         <div class="panel">
           <div class="panel-title">参数</div>
           <div class="set-row">
-            <span class="set-label"><b>合成并发</b>本机 1–2 / 云端可大</span>
-            <input type="number" v-model.number="synthConcurrency" min="1" max="32" style="width:70px" />
+            <span class="set-label"><b>合成并发</b>-1 不限（仅按 RPM 限速）</span>
+            <input type="number" v-model.number="synthConcurrency" min="-1" max="64" style="width:70px" />
           </div>
           <div class="set-row">
             <span class="set-label"><b>改写并发</b>LLM 通道上限</span>

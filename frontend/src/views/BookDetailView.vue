@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { ChapterInfo } from "../api/client";
 import { useBooksStore } from "../stores/books";
+import { useSettingsStore } from "../stores/settings";
 import { useToastStore } from "../stores/toast";
 import { waitForJob } from "../utils/jobs";
 import ChapterTree from "../components/ChapterTree.vue";
@@ -10,6 +11,7 @@ import ChapterTree from "../components/ChapterTree.vue";
 const route = useRoute();
 const router = useRouter();
 const books = useBooksStore();
+const settingsStore = useSettingsStore();
 const toast = useToastStore();
 const busy = ref(false);
 const error = ref("");
@@ -18,6 +20,14 @@ const synthConcurrency = ref(2);
 const bookId = route.params.bookId as string;
 
 onMounted(async () => {
+  // 高级选项默认值跟随设置页（合成并发支持 -1）
+  if (!settingsStore.settings) {
+    try { await settingsStore.load(); } catch { /* 忽略：仍用本地默认 */ }
+  }
+  if (settingsStore.settings) {
+    rewriteConcurrency.value = settingsStore.settings.rewrite_concurrency;
+    synthConcurrency.value = settingsStore.settings.tts_concurrency;
+  }
   await books.loadBook(bookId);
   if (books.detail) books.refreshBooks();
 });
@@ -114,10 +124,10 @@ async function synthesizeChapter(ch: ChapterInfo) {
       <label class="adv">改写并发
         <input type="number" v-model.number="rewriteConcurrency" min="1" max="100" />
       </label>
-      <label class="adv">合成并发
-        <input type="number" v-model.number="synthConcurrency" min="1" max="32" />
+      <label class="adv" title="合成并发：≥1 或 -1（-1 不限并发，仅按设置页 RPM 限速）">合成并发
+        <input type="number" v-model.number="synthConcurrency" min="-1" max="64" />
       </label>
-      <span class="muted tip">改写与合成走双通道，可同时运行</span>
+      <span class="muted tip">改写与合成走双通道，可同时运行 · 合成并发 -1 = 不限并发，仅按 RPM 限速</span>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 

@@ -53,6 +53,7 @@ class SettingsView(BaseModel):
     tts_clone_ref_text: str | None = None
     tts_batch_size: int = 3
     tts_concurrency: int = 2
+    tts_rpm: int = 80
     rewrite_concurrency: int = 20
 
 

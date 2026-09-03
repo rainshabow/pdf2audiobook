@@ -5,6 +5,8 @@ import math
 import struct
 import wave
 
+import time
+
 import httpx
 import pytest
 
@@ -161,3 +163,32 @@ async def test_empty_texts_returns_empty():
     adapter = _make_adapter(lambda request: httpx.Response(500))
     assert await adapter.synthesize_clone_batch([], ref_audio=_wav_bytes(0.1)) == []
     await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rpm_zero_creates_no_limiter():
+    adapter = MimoTTSAdapter("https://api.xiaomimimo.com/v1", "mimo-v2.5-tts",
+                             api_key="sk-test")
+    assert adapter._limiter is None
+    await adapter._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rpm_paces_each_http_request():
+    stamps = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        stamps.append(time.monotonic())
+        return _audio_response(_wav_bytes(0.05))
+
+    adapter = MimoTTSAdapter("https://api.xiaomimimo.com/v1", "mimo-v2.5-tts",
+                             api_key="sk-test", rpm=1200)
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        results = await adapter.synthesize_batch(["第一句。", "第二句。"])
+        assert len(results) == 2
+        assert len(stamps) == 2
+        # 1200 RPM = 20 请求/秒 → 两次请求间隔 ≥ ~0.05s
+        assert stamps[1] - stamps[0] >= 0.04
+    finally:
+        await adapter._client.aclose()

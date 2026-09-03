@@ -75,9 +75,11 @@ class JobManager:
         rs = self._settings_store.load()
         snap = _rs_to_dict(rs)
         if job_type == "rewrite":
-            snap["rewrite_concurrency"] = concurrency or rs.rewrite_concurrency
+            snap["rewrite_concurrency"] = (concurrency if concurrency is not None
+                                           else rs.rewrite_concurrency)
         elif self._lane(job_type) == "tts":
-            snap["tts_concurrency"] = concurrency or rs.tts_concurrency
+            snap["tts_concurrency"] = (concurrency if concurrency is not None
+                                       else rs.tts_concurrency)
         self._db.create_job(jid, book_id, chapter_id, job_type,
                             json.dumps(snap, ensure_ascii=False))
         queue = self._queue_tts if self._lane(job_type) == "tts" else self._queue_llm
@@ -242,7 +244,9 @@ class JobManager:
             snap = json.loads(job.get("settings_snapshot") or "{}")
         except Exception:
             snap = {}
-        concurrency = max(1, int(snap.get("tts_concurrency") or rs.tts_concurrency))
+        raw_concurrency = snap.get("tts_concurrency")
+        concurrency = int(raw_concurrency if raw_concurrency is not None
+                          else rs.tts_concurrency)
         adapter = self._tts_factory(rs, self._settings)
         self._current_adapter["tts"] = adapter
         try:
@@ -302,52 +306,58 @@ class JobManager:
                                 progress=(ch_idx + 1) / total)
         else:
             # 合成并发：同一章节的缺失分片按批次并行提交，互不阻塞
-            concurrency = max(1, concurrency)
             batches = [missing[b:b + batch_size]
                        for b in range(0, len(missing), batch_size)]
-            sem = asyncio.Semaphore(concurrency)
+            # 并发 >=1 用信号量限制同时在途请求；-1 = 不限并发（仅由适配器 RPM 限速）
+            sem = None if concurrency == -1 else asyncio.Semaphore(max(1, concurrency))
             abort = asyncio.Event()
             errors: list[Exception] = []
             done_count = len(items) - len(missing)
             submitted = 0
 
-            async def _submit_batch(group: list[tuple[int, dict]]) -> None:
+            async def _run_batch(group: list[tuple[int, dict]]) -> None:
                 nonlocal done_count
-                async with sem:
-                    await self._maybe_cancel(job_id)
-                    if abort.is_set():
-                        return
-                    texts = [it["spoken"] for _, it in group]
-                    try:
-                        if ref_bytes is not None:
-                            results = await adapter.synthesize_clone_batch(
-                                texts, ref_audio=ref_bytes,
-                                ref_text=rs.tts_clone_ref_text)
-                        else:
-                            results = await adapter.synthesize_batch(
-                                texts, voice=rs.tts_speaker,
-                                instruct=rs.tts_instruct)
-                    except _JobCancelled:
-                        raise
-                    except Exception as exc:  # noqa: BLE001
-                        # 取消后引擎返回“任务已中断”等错误应归类为取消而非失败
-                        if job_id and job_id in self._cancel_flags:
-                            raise _JobCancelled from exc
-                        errors.append(exc)
-                        abort.set()
-                        return
-                    if len(results) != len(group):
-                        errors.append(RuntimeError(
-                            f"引擎返回音频数 {len(results)} != 请求数 {len(group)}"))
-                        abort.set()
-                        return
-                    for (_, it), res in zip(group, results):
-                        it["path"].write_bytes(res.data)
-                        it["duration"] = res.duration
-                    done_count += len(group)
-                    self._db.update_job(
-                        job_id or "",
-                        progress=(ch_idx + done_count / len(items)) / total)
+                await self._maybe_cancel(job_id)
+                if abort.is_set():
+                    return
+                texts = [it["spoken"] for _, it in group]
+                try:
+                    if ref_bytes is not None:
+                        results = await adapter.synthesize_clone_batch(
+                            texts, ref_audio=ref_bytes,
+                            ref_text=rs.tts_clone_ref_text)
+                    else:
+                        results = await adapter.synthesize_batch(
+                            texts, voice=rs.tts_speaker,
+                            instruct=rs.tts_instruct)
+                except _JobCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # 取消后引擎返回“任务已中断”等错误应归类为取消而非失败
+                    if job_id and job_id in self._cancel_flags:
+                        raise _JobCancelled from exc
+                    errors.append(exc)
+                    abort.set()
+                    return
+                if len(results) != len(group):
+                    errors.append(RuntimeError(
+                        f"引擎返回音频数 {len(results)} != 请求数 {len(group)}"))
+                    abort.set()
+                    return
+                for (_, it), res in zip(group, results):
+                    it["path"].write_bytes(res.data)
+                    it["duration"] = res.duration
+                done_count += len(group)
+                self._db.update_job(
+                    job_id or "",
+                    progress=(ch_idx + done_count / len(items)) / total)
+
+            async def _submit_batch(group: list[tuple[int, dict]]) -> None:
+                if sem is None:
+                    await _run_batch(group)
+                else:
+                    async with sem:
+                        await _run_batch(group)
 
             tasks = []
             for batch in batches:
@@ -441,7 +451,7 @@ def _default_tts_factory(rs: RuntimeSettings, settings: Settings) -> TTSAdapter:
     if rs.tts_engine == "mimo":
         from app.services.tts.mimo import MimoTTSAdapter
         return MimoTTSAdapter(settings.mimo_base_url, rs.tts_model,
-                              api_key=settings.mimo_api_key)
+                              api_key=settings.mimo_api_key, rpm=rs.tts_rpm)
     return MockTTSAdapter()
 
 

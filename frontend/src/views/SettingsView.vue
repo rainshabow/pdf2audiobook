@@ -14,7 +14,7 @@ const form = reactive<api.SettingsView>({
   llm_model: "deepseek-v4-flash",
   chapter_low_chars: 5000, chapter_high_chars: 15000,
   tts_mode: "custom", tts_clone_ref_audio: null, tts_clone_ref_text: null,
-  tts_batch_size: 3, tts_concurrency: 2, rewrite_concurrency: 20,
+  tts_batch_size: 3, tts_concurrency: 2, tts_rpm: 80, rewrite_concurrency: 20,
 });
 const models = ref<Array<{ name: string; type: string }>>([]);
 const speakers = ref<Array<{ name: string }>>([]);
@@ -333,8 +333,13 @@ async function save(flash = true) {
         <label class="field">批处理句数（建议 1–5）
           <input type="number" v-model.number="form.tts_batch_size" min="1" max="50" />
         </label>
-        <label class="field">合成并发上限（本机 1–2，云端可大）
-          <input type="number" v-model.number="form.tts_concurrency" min="1" max="32" />
+        <label class="field">合成并发上限（-1 = 不限并发，仅按 RPM 限速）
+          <input type="number" v-model.number="form.tts_concurrency" min="-1" max="64" />
+          <small>本机 1–2；云端可设 -1，配合下方 RPM 限速防 429</small>
+        </label>
+        <label class="field">云端请求频率上限（RPM，0 = 不限速）
+          <input type="number" v-model.number="form.tts_rpm" min="0" max="600" />
+          <small>MiMo 官方约 100 请求/分；建议 ≤80。仅云端引擎生效。</small>
         </label>
         <label class="field">固化语速（默认 1.25）
           <input type="number" v-model.number="form.tts_speed" step="0.1" min="0.5" max="2" />

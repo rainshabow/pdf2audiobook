@@ -718,3 +718,69 @@ async def test_rewrite_and_synthesize_run_concurrently(data_dir):
     finally:
         release.set()
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_concurrency_minus_one_in_settings_removes_cap(data_dir):
+    """设置页并发 = -1：任务不再限制并发（不传 concurrency 覆盖时也生效）。"""
+    _make_book(data_dir, "b42")
+    ch = store.chapter_dir(data_dir, "b42", "ch-001")
+    (ch / "speech.md").write_text(
+        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(8)),
+        encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_batch_size = 1
+    rs.tts_concurrency = -1
+    ss.save(rs)
+
+    seen: dict = {}
+    adapter = _TrackingConcurrentTTS(delay=0.12)
+
+    def _factory(rs, settings):
+        seen["rpm"] = rs.tts_rpm
+        return adapter
+
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=_factory)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b42")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        snap = json.loads(jm.get_job(jid)["settings_snapshot"])
+        assert snap["tts_concurrency"] == -1
+        assert snap["tts_rpm"] == 80  # 默认云端 RPM 上限进入任务快照
+        assert seen["rpm"] == 80
+        # 无信号量 → 全部句子的请求同时在途（远超默认并发 2/4 的上限）
+        assert adapter.max_inflight >= 8
+        assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_concurrency_minus_one_override(data_dir):
+    """任务级 concurrency=-1 覆盖设置默认值并取消并发上限。"""
+    _make_book(data_dir, "b43")
+    ch = store.chapter_dir(data_dir, "b43", "ch-001")
+    (ch / "speech.md").write_text(
+        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(6)),
+        encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_batch_size = 1
+    rs.tts_concurrency = 2  # 默认仍为 2，用任务参数覆盖为 -1
+    ss.save(rs)
+
+    adapter = _TrackingConcurrentTTS(delay=0.12)
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b43", concurrency=-1)
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        snap = json.loads(jm.get_job(jid)["settings_snapshot"])
+        assert snap["tts_concurrency"] == -1
+        assert adapter.max_inflight >= 6
+    finally:
+        await jm.shutdown()

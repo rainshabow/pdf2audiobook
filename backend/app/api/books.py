@@ -115,9 +115,16 @@ async def start_rewrite(request: Request, book_id: str,
 
 @router.post("/{book_id}/synthesize", response_model=JobInfo)
 async def start_synthesize(request: Request, book_id: str,
-                           concurrency: int | None = Query(None, ge=1)):
+                           concurrency: int | None = Query(None)):
+    _check_tts_concurrency(concurrency)
     return await _start(request, "synthesize", book_id, require_parsed=True,
                         concurrency=concurrency)
+
+
+def _check_tts_concurrency(concurrency: int | None) -> None:
+    """合成并发：≥1 或 -1（-1 表示不限制并发，仅按 RPM 限速）。"""
+    if concurrency is not None and concurrency != -1 and concurrency < 1:
+        raise HTTPException(400, "合成并发需为 -1（不限）或 ≥1")
 
 
 async def _start(request: Request, job_type: str, book_id: str, *,

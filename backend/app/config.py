@@ -54,7 +54,8 @@ class RuntimeSettings:
     tts_clone_ref_audio: str | None = None
     tts_clone_ref_text: str | None = None
     tts_batch_size: int = 3
-    tts_concurrency: int = 2  # 合成任务内部并发请求数（本机 qwen 建议 1-2，云端 mimo 可调大）
+    tts_concurrency: int = 2  # 合成任务内部并发请求数；-1 = 不限制并发（仅按 tts_rpm 限速）
+    tts_rpm: int = 80  # 云端 TTS 每分钟请求上限（MiMo 官方约 100，建议 ≤80）；0 = 不限
     rewrite_concurrency: int = 20
 
 

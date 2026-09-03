@@ -83,8 +83,9 @@ async def restore_chapter(request: Request, book_id: str, chapter_id: str):
 
 @router.post("/{chapter_id}/synthesize", response_model=JobInfo)
 async def synthesize_chapter(request: Request, book_id: str, chapter_id: str,
-                             concurrency: int | None = Query(None, ge=1)):
+                             concurrency: int | None = Query(None)):
     data_dir = _data_dir(request)
+    _check_tts_concurrency(concurrency)
     book_id = _validate_id(book_id)
     chapter_id = _validate_id(chapter_id)
     bdir = store.book_dir(data_dir, book_id)
@@ -117,8 +118,9 @@ async def rewrite_chapter(request: Request, book_id: str, chapter_id: str,
 
 @router.post("/{chapter_id}/rebuild", response_model=JobInfo)
 async def rebuild_chapter(request: Request, book_id: str, chapter_id: str,
-                          concurrency: int | None = Query(None, ge=1)):
+                          concurrency: int | None = Query(None)):
     data_dir = _data_dir(request)
+    _check_tts_concurrency(concurrency)
     book_id = _validate_id(book_id)
     chapter_id = _validate_id(chapter_id)
     bdir = store.book_dir(data_dir, book_id)
@@ -164,6 +166,12 @@ async def get_vtt(request: Request, book_id: str, chapter_id: str):
     if not path.exists():
         raise HTTPException(404, "字幕不存在")
     return FileResponse(path, media_type="text/vtt; charset=utf-8")
+
+
+def _check_tts_concurrency(concurrency: int | None) -> None:
+    """合成并发：≥1 或 -1（-1 表示不限制并发，仅按 RPM 限速）。"""
+    if concurrency is not None and concurrency != -1 and concurrency < 1:
+        raise HTTPException(400, "合成并发需为 -1（不限）或 ≥1")
 
 
 def _data_dir(request: Request):

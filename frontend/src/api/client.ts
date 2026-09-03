@@ -26,7 +26,7 @@ export interface SettingsView {
   chapter_low_chars: number; chapter_high_chars: number;
   tts_mode: string; tts_clone_ref_audio: string | null;
   tts_clone_ref_text: string | null; tts_batch_size: number;
-  tts_concurrency: number; rewrite_concurrency: number;
+  tts_concurrency: number; tts_rpm: number; rewrite_concurrency: number;
 }
 
 const api = axios.create({ baseURL: "/api" });

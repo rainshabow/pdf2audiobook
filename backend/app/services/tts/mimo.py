@@ -11,6 +11,7 @@ import wave
 
 import httpx
 
+from app.services.ratelimit import AsyncRateLimiter
 from app.services.tts.base import AudioResult, TTSAdapter
 
 MODELS = [
@@ -26,11 +27,13 @@ class MimoTTSAdapter(TTSAdapter):
     """MiMo-TTS 云端 TTS：每次请求合成一段文本，返回 base64 音频。"""
 
     def __init__(self, base_url: str, model: str, api_key: str,
-                 timeout: float = 180.0):
+                 timeout: float = 180.0, rpm: int = 0):
         self._base = base_url.rstrip("/")
         self._model = model or "mimo-v2.5-tts"
         self._api_key = api_key or ""
         self._client = httpx.AsyncClient(timeout=timeout)
+        # 云端账号按 RPM 限流：>0 时每个 HTTP 请求先取令牌（不设并发上限也能兜底防 429）
+        self._limiter = AsyncRateLimiter(rpm) if rpm > 0 else None
 
     async def list_models(self) -> list[dict]:
         return list(MODELS)
@@ -65,6 +68,8 @@ class MimoTTSAdapter(TTSAdapter):
         results: list[AudioResult] = []
         for text in texts:
             body = self._build_body(model, text, voice=voice, instruct=instruct)
+            if self._limiter is not None:
+                await self._limiter.acquire()
             r = await self._client.post(
                 f"{self._base}/chat/completions",
                 headers={"api-key": self._api_key, "Content-Type": "application/json"},

@@ -420,6 +420,43 @@ async def test_synthesize_chapter_endpoint(client, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_synthesize_concurrency_minus_one_and_validation(client, tmp_path):
+    """合成并发允许 -1（不限制并发），拒绝 0 与小于 -1 的值。"""
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+    await client.put(
+        f"/api/books/{book['book_id']}/chapters/{ch}/speech.md",
+        content="第一句。", headers={"Content-Type": "text/plain"})
+
+    # 单章合成：-1 合法并写入任务快照
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/synthesize?concurrency=-1")
+    assert r.status_code == 200
+    job = r.json()
+    snap = client.app.state.job_manager.get_job(job["id"])["settings_snapshot"]
+    assert json.loads(snap)["tts_concurrency"] == -1
+    await _wait(client, job["id"])
+
+    # 非法并发值：0 与 -2 均 400
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/synthesize?concurrency=0")
+    assert r.status_code == 400
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/synthesize?concurrency=-2")
+    assert r.status_code == 400
+    # 整书合成接口同样校验
+    r = await client.post(f"/api/books/{book['book_id']}/synthesize?concurrency=0")
+    assert r.status_code == 400
+    r = await client.post(f"/api/books/{book['book_id']}/synthesize?concurrency=-2")
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_rewrite_concurrency_param(client, tmp_path):
     r = await client.post("/api/books", files={
         "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
@@ -458,17 +495,19 @@ async def test_upload_clone_audio_and_settings_fields(client, tmp_path):
     assert s["rewrite_concurrency"] == 20
     assert s["tts_batch_size"] == 3
     assert s["tts_concurrency"] == 2
+    assert s["tts_rpm"] == 80
     r = await client.put("/api/settings", json={
         **s, "tts_mode": "clone", "tts_clone_ref_audio": "clone_ref_audio.wav",
         "rewrite_concurrency": 8, "tts_batch_size": 5, "tts_speed": 1.25,
-        "tts_concurrency": 4})
+        "tts_concurrency": -1, "tts_rpm": 120})
     assert r.status_code == 200
     got = (await client.get("/api/settings")).json()
     assert got["tts_mode"] == "clone"
     assert got["tts_clone_ref_audio"] == "clone_ref_audio.wav"
     assert got["rewrite_concurrency"] == 8
     assert got["tts_batch_size"] == 5
-    assert got["tts_concurrency"] == 4
+    assert got["tts_concurrency"] == -1
+    assert got["tts_rpm"] == 120
 
 
 @pytest.mark.asyncio
