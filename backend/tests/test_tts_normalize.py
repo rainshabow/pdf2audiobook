@@ -20,6 +20,10 @@ def test_whitelist_proper_nouns_unchanged():
     assert normalize_for_tts("GitHub、HuggingFace、LangChain") == "GitHub、HuggingFace、LangChain"
     assert normalize_for_tts("iPhone 与 macOS、Qwen、MiMo") == "iPhone 与 macOS、Qwen、MiMo"
     assert normalize_for_tts("NVIDIA GPU 与 AMD") == "NVIDIA G P U 与 A M D"  # NVIDIA 整词读，GPU/AMD 逐字母
+    for w in ["CUDA", "AdamW", "ZeRO", "LoRA", "DoRA", "RoPE", "ReAct", "NVLink", "BERT"]:
+        assert normalize_for_tts(w) == w, w
+    # QLoRA 未入选白名单，仍按逐字母展开
+    assert normalize_for_tts("LoRA 与 QLoRA") == "LoRA 与 Q L O R A"
 
 
 def test_plain_words_and_single_letters_unchanged():

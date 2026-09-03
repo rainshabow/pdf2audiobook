@@ -17,6 +17,7 @@ _WHITELIST = {
     "OpenAI", "DeepSeek", "ChatGPT", "GitHub", "HuggingFace", "LangChain",
     "LlamaIndex", "DeepMind", "Anthropic", "YouTube", "PowerPoint", "Excel",
     "iOS", "macOS", "iPhone", "iPad", "Qwen", "MiMo", "NVIDIA",
+    "CUDA", "AdamW", "ZeRO", "LoRA", "DoRA", "RoPE", "ReAct", "NVLink", "BERT",
 }
 
 
