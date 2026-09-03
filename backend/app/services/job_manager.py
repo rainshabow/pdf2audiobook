@@ -6,7 +6,7 @@ from typing import Awaitable, Callable
 
 from app import store
 from app.config import RuntimeSettings, SettingsStore, Settings
-from app.services import audio, pdf_extractor, rewriter, segmenter
+from app.services import audio, pdf_extractor, rewriter, segmenter, tts_normalize
 from app.services.tts.base import TTSAdapter
 from app.services.tts.mock import MockTTSAdapter
 from app.services.tts.qwen_webui import QwenWebUIAdapter
@@ -277,14 +277,17 @@ class JobManager:
         # 预扫描：区分可复用分片与缺失分片
         items: list[dict] = []
         for idx, seg_text in enumerate(parts):
-            h = audio.text_hash(seg_text)
+            # 归一化只用于“送给 TTS 的朗读文本”，text 字段仍保留 speech.md 原文（字幕用）
+            spoken = tts_normalize.normalize_for_tts(seg_text)
+            h = audio.text_hash(spoken)
             part_path = parts_dir / f"{idx:04d}_{h}.wav"
             if part_path.exists():
-                items.append({"idx": idx, "text": seg_text, "hash": h, "path": part_path,
+                items.append({"idx": idx, "text": seg_text, "spoken": spoken,
+                              "hash": h, "path": part_path,
                               "duration": audio.wav_duration(part_path.read_bytes())})
             else:
-                items.append({"idx": idx, "text": seg_text, "hash": h, "path": part_path,
-                              "duration": None})
+                items.append({"idx": idx, "text": seg_text, "spoken": spoken,
+                              "hash": h, "path": part_path, "duration": None})
         missing = [(i, it) for i, it in enumerate(items) if it["duration"] is None]
         batch_size = max(1, rs.tts_batch_size)
         ref_bytes: bytes | None = None
@@ -313,7 +316,7 @@ class JobManager:
                     await self._maybe_cancel(job_id)
                     if abort.is_set():
                         return
-                    texts = [it["text"] for _, it in group]
+                    texts = [it["spoken"] for _, it in group]
                     try:
                         if ref_bytes is not None:
                             results = await adapter.synthesize_clone_batch(

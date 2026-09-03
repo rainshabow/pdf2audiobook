@@ -504,14 +504,17 @@ class _RecordingBatchTTS(MockTTSAdapter):
         super().__init__()
         self.batch_calls = 0
         self.clone_calls = 0
+        self.submitted_texts: list[list[str]] = []
 
     async def synthesize_batch(self, texts, *, voice=None, language=None, instruct=None):
         self.batch_calls += 1
+        self.submitted_texts.append(list(texts))
         return [await self.synthesize(t, voice=voice, language=language, instruct=instruct)
                 for t in texts]
 
     async def synthesize_clone_batch(self, texts, *, ref_audio, ref_text=None, language=None):
         self.clone_calls += 1
+        self.submitted_texts.append(list(texts))
         return [await self.synthesize(t) for t in texts]
 
 
@@ -560,6 +563,38 @@ async def test_synthesize_uses_batches(data_dir):
         # 5 句 / 批 2 → 3 次批量调用
         assert adapter.batch_calls == 3
         assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_normalizes_spoken_text_but_keeps_subtitles(data_dir):
+    """送 TTS 的文本做默认归一化（LLM→L L M），但 speech.md/字幕仍保留原文。"""
+    _make_book(data_dir, "b41")
+    ch = store.chapter_dir(data_dir, "b41", "ch-001")
+    (ch / "speech.md").write_text(
+        "LLM 与 ID。\n\nOpenAI 与 vLLM 用于生产。", encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    adapter = _RecordingBatchTTS()
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b41")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+
+        # speech.md 不被改写
+        assert "LLM 与 ID。" in (ch / "speech.md").read_text(encoding="utf-8")
+
+        # 字幕/segments 使用原文
+        segs = store.load_json(ch / "segments.json", [])
+        joined = "\n".join(s["text"] for s in segs)
+        assert "LLM" in joined and "ID" in joined and "vLLM" in joined
+
+        # 送 TTS 的是归一化后的朗读文本
+        flat = [t for batch in adapter.submitted_texts for t in batch]
+        assert any("L L M" in t and "I D" in t and "V L L M" in t for t in flat)
+        assert not any("LLM" in t or "ID" in t or "vLLM" in t for t in flat)
     finally:
         await jm.shutdown()
 
