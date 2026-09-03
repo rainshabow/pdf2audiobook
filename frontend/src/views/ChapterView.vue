@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import * as api from "../api/client";
 import ChapterEditor from "../components/ChapterEditor.vue";
@@ -13,8 +13,8 @@ const route = useRoute();
 const router = useRouter();
 const books = useBooksStore();
 const toast = useToastStore();
-const bookId = route.params.bookId as string;
-const chapterId = route.params.chapterId as string;
+const bookId = ref(route.params.bookId as string);
+const chapterId = ref(route.params.chapterId as string);
 
 const md = ref("");
 const sourceMd = ref<string | null>(null);
@@ -29,34 +29,46 @@ const synthConcurrency = ref(2);
 const audioVersion = ref(0);
 const error = ref("");
 
-const chapterIndex = computed(() => (books.detail?.chapters ?? []).findIndex((c) => c.id === chapterId));
+const chapterIndex = computed(() =>
+  (books.detail?.chapters ?? []).findIndex((c) => c.id === chapterId.value));
 const chapter = computed(() => (books.detail?.chapters ?? [])[chapterIndex.value]);
-const chapterTitle = computed(() => chapter.value?.title ?? chapterId);
-
+const chapterTitle = computed(() => chapter.value?.title ?? chapterId.value);
 const sourceHtml = computed(() => sourceMd.value ? (marked.parse(sourceMd.value) as string) : "");
 
-onMounted(async () => {
+async function loadChapter() {
+  const bId = route.params.bookId as string;
+  const cId = route.params.chapterId as string;
+  bookId.value = bId;
+  chapterId.value = cId;
+  audioVersion.value++;
+  activeTab.value = "speech";
+  saved.value = false;
+  isSource.value = false;
+  error.value = "";
+  md.value = "";
+  sourceMd.value = null;
   try {
-    if (!books.detail) await books.loadBook(bookId);
-    md.value = await api.getSpeechMd(bookId, chapterId);
+    if (books.detail?.book_id !== bId) await books.loadBook(bId);
+    md.value = await api.getSpeechMd(bId, cId);
     if (!md.value.trim()) {
       try {
-        const src = await api.getSourceMd(bookId, chapterId);
+        const src = await api.getSourceMd(bId, cId);
         if (src.trim()) { md.value = src; isSource.value = true; }
       } catch { /* 无原始文本 */ }
     }
     try {
-      sourceMd.value = await api.getSourceMd(bookId, chapterId);
+      sourceMd.value = await api.getSourceMd(bId, cId);
     } catch { sourceMd.value = null; }
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
   }
-});
+}
+watch(() => [route.params.bookId, route.params.chapterId] as const, loadChapter, { immediate: true });
 
 async function save() {
   error.value = "";
   try {
-    await api.saveSpeechMd(bookId, chapterId, md.value);
+    await api.saveSpeechMd(bookId.value, chapterId.value, md.value);
     isSource.value = false;
     toast.show("文本已保存");
   } catch (e: any) {
@@ -69,8 +81,8 @@ async function restore() {
   restoring.value = true;
   error.value = "";
   try {
-    await api.restoreChapter(bookId, chapterId);
-    md.value = await api.getSpeechMd(bookId, chapterId);
+    await api.restoreChapter(bookId.value, chapterId.value);
+    md.value = await api.getSpeechMd(bookId.value, chapterId.value);
     isSource.value = true;
     toast.show("已还原为原文");
   } catch (e: any) {
@@ -84,10 +96,10 @@ async function rewrite() {
   rewriting.value = true;
   error.value = "";
   try {
-    const job = await api.rewriteChapter(bookId, chapterId, rewriteConcurrency.value);
+    const job = await api.rewriteChapter(bookId.value, chapterId.value, rewriteConcurrency.value);
     toast.show("改写任务已开始");
     await waitForJob(job.id);
-    md.value = await api.getSpeechMd(bookId, chapterId);
+    md.value = await api.getSpeechMd(bookId.value, chapterId.value);
     isSource.value = false;
     toast.show("改写完成");
   } catch (e: any) {
@@ -101,11 +113,11 @@ async function synthesize() {
   synthesizing.value = true;
   error.value = "";
   try {
-    const job = await api.synthesizeChapter(bookId, chapterId, synthConcurrency.value);
+    const job = await api.synthesizeChapter(bookId.value, chapterId.value, synthConcurrency.value);
     toast.show("合成任务已开始，可在任务中心查看进度");
     await waitForJob(job.id);
     audioVersion.value++;
-    if (books.detail) await books.loadBook(bookId);
+    if (books.detail?.book_id === bookId.value) await books.loadBook(bookId.value);
     toast.show("本章合成完成");
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
@@ -115,7 +127,7 @@ async function synthesize() {
 }
 
 function goTo(chId: string | null) {
-  if (chId) router.push(`/books/${bookId}/chapters/${chId}`);
+  if (chId && chId !== chapterId.value) router.push(`/books/${bookId.value}/chapters/${chId}`);
 }
 </script>
 

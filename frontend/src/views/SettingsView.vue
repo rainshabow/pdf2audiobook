@@ -117,6 +117,11 @@ onBeforeRouteLeave(async () => {
     } catch { /* 保存失败不阻塞离开，错误已展示在页面 */ }
   }
 });
+function switchEngine(engine: string) {
+  if (form.tts_engine === engine) return;
+  form.tts_engine = engine;
+  void onEngineChange();
+}
 async function onEngineChange() {
   // v-model 已将 form.tts_engine 更新为新值，这里无条件重置模型/声音，
   // 避免旧引擎的模型名或声音残留到新引擎。
@@ -240,20 +245,25 @@ async function save(flash = true) {
       <!-- 引擎 -->
       <div class="set-group" style="grid-column:1 / -1">
         <div class="panel-title" style="margin:0 0 14px">TTS 引擎</div>
-        <div class="engine-wrap">
-          <label class="field wide">引擎
-            <select v-model="form.tts_engine" @change="onEngineChange">
-              <option value="mock">mock（测试）</option>
-              <option value="qwen_webui">qwen_webui（本机 Qwen3-TTS）</option>
-              <option value="mimo">mimo（云端 MiMo-TTS 2.5）</option>
-            </select>
-          </label>
-          <label class="field wide">模型
-            <select v-model="form.tts_model">
-              <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }}</option>
-            </select>
-          </label>
+        <div class="engine-tabs">
+          <button class="engine-tab" :class="{ active: form.tts_engine === 'mimo' }" @click="switchEngine('mimo')">
+            <span class="et-name"><span v-if="form.tts_engine === 'mimo'" class="live-dot"></span>MiMo · 云端 TTS 2.5</span>
+            <span class="et-desc">无需 GPU · 支持高并发 · 预置音色丰富</span>
+          </button>
+          <button class="engine-tab" :class="{ active: form.tts_engine === 'qwen_webui' }" @click="switchEngine('qwen_webui')">
+            <span class="et-name"><span v-if="form.tts_engine === 'qwen_webui'" class="live-dot"></span>Qwen · 本机引擎</span>
+            <span class="et-desc">RTX 5060 · 需加载模型 · 建议并发 1–2</span>
+          </button>
+          <button class="engine-tab" :class="{ active: form.tts_engine === 'mock' }" @click="switchEngine('mock')">
+            <span class="et-name"><span v-if="form.tts_engine === 'mock'" class="live-dot"></span>Mock · 测试</span>
+            <span class="et-desc">不调用真实引擎，用于开发验证</span>
+          </button>
         </div>
+        <label class="field" style="margin-top:12px">模型
+          <select v-model="form.tts_model">
+            <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }}</option>
+          </select>
+        </label>
 
         <div v-if="form.tts_engine === 'qwen_webui'" class="engine-actions">
           <button class="btn btn-soft btn-sm" :disabled="engineBusy" @click="startEngine">启动服务</button>
@@ -356,7 +366,12 @@ async function save(flash = true) {
 <style scoped>
 .settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start}
 .set-group{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:18px;box-shadow:var(--shadow-sm)}
-.engine-wrap{display:grid;grid-template-columns:1fr 1.6fr;gap:14px}
+.engine-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.engine-tab{border:1px solid var(--line);background:#fff;border-radius:var(--r-md);padding:12px 14px;text-align:left;transition:.18s;display:flex;flex-direction:column;gap:4px}
+.engine-tab:hover{border-color:var(--green-200);background:var(--green-50)}
+.engine-tab.active{border-color:var(--green-500);background:var(--green-50);box-shadow:0 0 0 3px rgba(16,185,129,.10)}
+.et-name{font-weight:700;display:flex;align-items:center;gap:8px;font-size:13.5px}
+.et-desc{font-size:12px;color:var(--muted);line-height:1.4}
 .field{font-size:12.5px;color:var(--muted);margin-bottom:10px}
 .field small{display:block;color:var(--faint);margin-top:2px}
 .field select,.field input{display:block;width:100%;margin-top:6px}
@@ -374,5 +389,5 @@ async function save(flash = true) {
 .static-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px dashed var(--line);margin-top:4px}
 .static-row b{display:block;font-size:13px;color:var(--ink)}
 .static-row small{color:var(--muted);font-size:12px}
-@media (max-width:760px){.engine-wrap{grid-template-columns:1fr}}
+@media (max-width:860px){.engine-tabs{grid-template-columns:1fr}}
 </style>
