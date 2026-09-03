@@ -7,20 +7,30 @@ def test_pure_uppercase_acronyms_spaced():
     assert normalize_for_tts("检查 URL 是否正确") == "检查 U R L 是否正确"
 
 
-def test_words_and_mixed_case_unchanged():
-    # 单词/品牌名/带数字型号不应被拆字母
-    assert normalize_for_tts("OpenAI、DeepSeek-R1、GPT-4o") == "OpenAI、DeepSeek-R1、GPT-4o"
-    assert normalize_for_tts("MoE、QwQ、o1") == "MoE、QwQ、o1"
-    # 单字母不变
-    assert normalize_for_tts("A 与 B") == "A 与 B"
-
-
-def test_vllm_curated_spelling():
+def test_mixed_case_abbreviations_spelled():
+    assert normalize_for_tts("MoE 架构") == "M O E 架构"
     assert normalize_for_tts("用 vLLM 部署") == "用 V L L M 部署"
-    assert normalize_for_tts("vLLM2 不处理") == "vLLM2 不处理"  # 避免命中子串
+    assert normalize_for_tts("QwQ 模型") == "Q W Q 模型"
+    assert normalize_for_tts("LLM-as-Judge") == "L L M-as-Judge"
+    assert normalize_for_tts("GPT-4o") == "G P T-4o"
 
 
-def test_no_acronym_returns_same():
-    text = "这是一段没有缩写的普通文本，包含 123 与中文标点。"
-    assert normalize_for_tts(text) == text
+def test_whitelist_proper_nouns_unchanged():
+    assert normalize_for_tts("OpenAI 与 DeepSeek-R1 和 ChatGPT") == "OpenAI 与 DeepSeek-R1 和 ChatGPT"
+    assert normalize_for_tts("GitHub、HuggingFace、LangChain") == "GitHub、HuggingFace、LangChain"
+    assert normalize_for_tts("iPhone 与 macOS、Qwen、MiMo") == "iPhone 与 macOS、Qwen、MiMo"
+
+
+def test_plain_words_and_single_letters_unchanged():
+    assert normalize_for_tts("Agent 与 Token 是常用词") == "Agent 与 Token 是常用词"
+    assert normalize_for_tts("A 与 B") == "A 与 B"
+    assert normalize_for_tts("这是普通文本 123。") == "这是普通文本 123。"
+
+
+def test_idempotent():
+    once = normalize_for_tts("LLM、MoE、vLLM 与 OpenAI")
+    assert normalize_for_tts(once) == once
+
+
+def test_empty():
     assert normalize_for_tts("") == ""
