@@ -48,3 +48,12 @@ def test_idempotent():
 
 def test_empty():
     assert normalize_for_tts("") == ""
+
+
+def test_number_k_reads_as_letter_k():
+    assert normalize_for_tts("128K 上下文") == "一百二十八 K 上下文"
+    assert normalize_for_tts("32K到128K个Token") == "三十二 K到一百二十八 K个Token"
+    assert normalize_for_tts("1.5K 词表") == "一点五 K 词表"
+    # KB/正常单词不受影响
+    assert normalize_for_tts("128KB 文件") == "128K B 文件"
+    assert normalize_for_tts("mask 与 K8s") == "mask 与 K8s"

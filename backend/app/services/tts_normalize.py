@@ -11,6 +11,10 @@ MoE→M O E、vLLM→V L L M、QwQ→Q W Q），避免 TTS 把缩写当成普通
 import re
 
 _LETTER_RUN_RE = re.compile(r"[A-Za-z]+")
+# “数字+K”（如 128K、32k）在技术语境常被 TTS 误读为“开尔文”；
+# 转成中文数字 + 空格 K（“一百二十八 K”），引导引擎按字母读 K。
+_NUM_K_RE = re.compile(r"(?<![A-Za-z0-9])(\d+(?:\.\d+)?)\s*[Kk](?![A-Za-z0-9])")
+_DIGITS = "零一二三四五六七八九"
 
 # 白名单：TTS 可正确朗读的专名/品牌/产品名，不参与逐字母展开
 _WHITELIST = {
@@ -19,6 +23,56 @@ _WHITELIST = {
     "iOS", "macOS", "iPhone", "iPad", "Qwen", "MiMo", "NVIDIA",
     "CUDA", "AdamW", "ZeRO", "LoRA", "DoRA", "RoPE", "ReAct", "NVLink", "BERT",
 }
+
+
+def _int_cn(n: int) -> str:
+    """整数转中文（支持 0 ~ 99999999，足够容量类数字）。"""
+    if n == 0:
+        return "零"
+    if n >= 100000000:
+        return str(n)  # 超范围直接保留阿拉伯数字
+    units = ["", "十", "百", "千"]
+
+    def under_wan(x: int) -> str:
+        res = ""
+        zero = False
+        for i in range(3, -1, -1):
+            d = x // (10 ** i) % 10
+            if d == 0:
+                if res:
+                    zero = True
+            else:
+                if zero:
+                    res += "零"
+                    zero = False
+                res += _DIGITS[d] + units[i]
+        return res
+
+    wan = n // 10000 % 10000
+    rest = n % 10000
+    out = ""
+    if wan:
+        out += under_wan(wan) + "万"
+        if rest and rest < 1000:
+            out += "零"
+    if rest:
+        out += under_wan(rest)
+    if not out:
+        out = _DIGITS[n]
+    return out
+
+
+def _number_cn(text_num: str) -> str:
+    if "." in text_num:
+        whole, _, frac = text_num.partition(".")
+        w = _int_cn(int(whole or "0"))
+        f = "".join(_DIGITS[int(d)] for d in frac)
+        return f"{w}点{f}"
+    return _int_cn(int(text_num))
+
+
+def _spell_k_number(match: re.Match) -> str:
+    return f"{_number_cn(match.group(1))} K"
 
 
 def _is_abbreviation(run: str) -> bool:
@@ -51,4 +105,6 @@ def normalize_for_tts(text: str) -> str:
         run = match.group(0)
         return _spell_letters(run) if _is_abbreviation(run) else run
 
-    return _LETTER_RUN_RE.sub(_replace, text)
+    # 先处理“数字+K”（避免 128KB 被拆成 128K B 后误匹配），再处理字母串
+    out = _NUM_K_RE.sub(_spell_k_number, text)
+    return _LETTER_RUN_RE.sub(_replace, out)
