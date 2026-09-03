@@ -41,6 +41,11 @@ onBeforeUnmount(() => view.value?.destroy());
 </template>
 
 <style scoped>
-.cm { border: 1px solid #ddd; height: 60vh; overflow: auto; }
-.preview { border: 1px solid #ddd; padding: 16px; height: 60vh; overflow: auto; background: #fff; }
+.editor :deep(.cm-editor){height:460px;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;font-size:14px}
+.editor :deep(.cm-scroller){font-family:var(--font);line-height:1.9}
+.tool{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:10px;font-size:13px;color:var(--muted)}
+.cm { border:1px solid var(--line); border-radius:var(--r-md); height:460px; overflow:auto; background:#fff; }
+.preview { border:1px solid var(--line); border-radius:var(--r-md); padding:18px; height:460px; overflow:auto; background:#fff; line-height:1.9; }
+.preview :deep(h1),.preview h1,.preview h2,.preview h3{margin:12px 0 6px;line-height:1.5}
+.preview p{margin-bottom:10px}
 </style>

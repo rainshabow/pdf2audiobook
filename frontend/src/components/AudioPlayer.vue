@@ -29,7 +29,7 @@ function onTime() {
            @timeupdate="onTime">
       <track kind="subtitles" :src="vttUrl(bookId, chapterId)" default />
     </audio>
-    <label>倍速
+    <label class="rate-row">倍速
       <select :value="rate" @change="onRate">
         <option v-for="r in [0.5, 0.75, 1, 1.25, 1.5, 2]" :key="r" :value="r">{{ r }}×</option>
       </select>
@@ -39,6 +39,8 @@ function onTime() {
 </template>
 
 <style scoped>
-.player { display: flex; flex-direction: column; gap: 8px; }
-.cue { background: #222; color: #fff; padding: 8px; border-radius: 6px; min-height: 1.2em; }
+.player{display:flex;flex-direction:column;gap:10px}
+.player audio{width:100%;height:44px;border-radius:12px}
+.rate-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.cue{background:#0F241C;color:#D9F5E9;padding:12px 14px;border-radius:var(--r-md);min-height:56px;font-size:13.5px;line-height:1.7;transition:.2s}
 </style>
