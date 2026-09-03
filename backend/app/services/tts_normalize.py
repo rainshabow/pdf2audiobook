@@ -16,7 +16,7 @@ _LETTER_RUN_RE = re.compile(r"[A-Za-z]+")
 _WHITELIST = {
     "OpenAI", "DeepSeek", "ChatGPT", "GitHub", "HuggingFace", "LangChain",
     "LlamaIndex", "DeepMind", "Anthropic", "YouTube", "PowerPoint", "Excel",
-    "iOS", "macOS", "iPhone", "iPad", "Qwen", "MiMo",
+    "iOS", "macOS", "iPhone", "iPad", "Qwen", "MiMo", "NVIDIA",
 }
 
 

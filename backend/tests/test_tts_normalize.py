@@ -19,6 +19,7 @@ def test_whitelist_proper_nouns_unchanged():
     assert normalize_for_tts("OpenAI 与 DeepSeek-R1 和 ChatGPT") == "OpenAI 与 DeepSeek-R1 和 ChatGPT"
     assert normalize_for_tts("GitHub、HuggingFace、LangChain") == "GitHub、HuggingFace、LangChain"
     assert normalize_for_tts("iPhone 与 macOS、Qwen、MiMo") == "iPhone 与 macOS、Qwen、MiMo"
+    assert normalize_for_tts("NVIDIA GPU 与 AMD") == "NVIDIA G P U 与 A M D"  # NVIDIA 整词读，GPU/AMD 逐字母
 
 
 def test_plain_words_and_single_letters_unchanged():
