@@ -27,6 +27,7 @@ const engineBusy = ref(false);
 const previewBusy = ref<string | null>(null);
 const dirty = ref(false);
 let initialized = false;
+let listSeq = 0; // 列表请求序号：丢弃过期响应，防止旧引擎慢请求覆盖新引擎列表
 let previewAudio: HTMLAudioElement | null = null;
 let previewObjectUrl: string | null = null;
 
@@ -127,6 +128,8 @@ async function onEngineChange() {
   // 避免旧引擎的模型名或声音残留到新引擎。
   form.tts_model = "";
   form.tts_speaker = null;
+  models.value = [];
+  speakers.value = [];
   await refreshLists();
   // 新引擎自动选择首个模型，避免空模型（mimo 首项即 mimo-v2.5-tts）
   if (!form.tts_model && models.value.length > 0) {
@@ -134,15 +137,22 @@ async function onEngineChange() {
   }
 }
 async function refreshLists() {
+  const seq = ++listSeq;
   try {
-    models.value = await api.listTTSModels(form.tts_engine);
-    speakers.value = await api.listTTSSpeakers(form.tts_engine);
+    const [ms, sp] = await Promise.all([
+      api.listTTSModels(form.tts_engine),
+      api.listTTSSpeakers(form.tts_engine),
+    ]);
+    if (seq !== listSeq) return; // 期间又切换了引擎，丢弃过期响应
+    models.value = ms;
+    speakers.value = sp;
     listError.value = "";
     hint.value = "";
     if (form.tts_engine === "qwen_webui" && (!models.value.length || !speakers.value.length)) {
       hint.value = "引擎模型尚未加载：请点击上方「加载模型」；若仍为空请确认 qwen-tts-webui 已启动。";
     }
   } catch (e: any) {
+    if (seq !== listSeq) return;
     models.value = [];
     speakers.value = [];
     listError.value = "加载模型/声音列表失败: " + (e?.response?.data?.detail ?? String(e));
