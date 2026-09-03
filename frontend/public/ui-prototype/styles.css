@@ -41,7 +41,7 @@ ul{list-style:none}
 .live-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--green-500);opacity:.5;animation:ping 1.8s var(--ease) infinite}
 
 /* ---------- Main / topbar ---------- */
-.main{display:flex;flex-direction:column;min-width:0}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .topbar{display:flex;align-items:center;gap:12px;padding:16px 28px;background:rgba(255,255,255,.7);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:30}
 .crumbs{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);min-width:0}
 .crumb{white-space:nowrap}
@@ -55,7 +55,7 @@ ul{list-style:none}
 .icon-btn:active{transform:scale(.92)}
 .icon-btn .dot-badge{position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--amber);border:2px solid #fff}
 
-.content{flex:1;overflow-y:auto;padding:26px 30px 60px}
+.content{flex:1;min-height:0;overflow-y:auto;padding:26px 30px 60px}
 
 /* ---------- Views ---------- */
 .view{display:none}
