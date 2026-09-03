@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import * as api from "../api/client";
 import ChapterEditor from "../components/ChapterEditor.vue";
+import { marked } from "marked";
 import AudioPlayer from "../components/AudioPlayer.vue";
 import { useBooksStore } from "../stores/books";
 import { useToastStore } from "../stores/toast";
@@ -16,6 +17,8 @@ const bookId = route.params.bookId as string;
 const chapterId = route.params.chapterId as string;
 
 const md = ref("");
+const sourceMd = ref<string | null>(null);
+const activeTab = ref<"speech" | "source">("speech");
 const saved = ref(false);
 const synthesizing = ref(false);
 const rewriting = ref(false);
@@ -30,6 +33,8 @@ const chapterIndex = computed(() => (books.detail?.chapters ?? []).findIndex((c)
 const chapter = computed(() => (books.detail?.chapters ?? [])[chapterIndex.value]);
 const chapterTitle = computed(() => chapter.value?.title ?? chapterId);
 
+const sourceHtml = computed(() => sourceMd.value ? (marked.parse(sourceMd.value) as string) : "");
+
 onMounted(async () => {
   try {
     if (!books.detail) await books.loadBook(bookId);
@@ -40,6 +45,9 @@ onMounted(async () => {
         if (src.trim()) { md.value = src; isSource.value = true; }
       } catch { /* 无原始文本 */ }
     }
+    try {
+      sourceMd.value = await api.getSourceMd(bookId, chapterId);
+    } catch { sourceMd.value = null; }
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
   }
@@ -137,10 +145,22 @@ function goTo(chId: string | null) {
 
     <div class="wb">
       <div class="panel editor-panel">
-        <div class="panel-title">朗读文本
-          <span class="ok" style="font-size:12px;font-weight:400" v-if="saved">✓ 已保存</span>
+        <div class="panel-title">
+          <span v-if="activeTab === 'speech'">朗读文本</span>
+          <span v-else>原文预览</span>
+          <span class="tabs">
+            <button class="tab" :class="{ active: activeTab === 'speech' }" @click="activeTab = 'speech'">朗读</button>
+            <button class="tab" :class="{ active: activeTab === 'source' }" @click="activeTab = 'source'">原文</button>
+          </span>
         </div>
-        <ChapterEditor v-model="md" />
+        <div v-show="activeTab === 'speech'">
+          <ChapterEditor v-model="md" />
+        </div>
+        <div v-show="activeTab === 'source'">
+          <div v-if="sourceMd" class="docbox" v-html="sourceHtml"></div>
+          <div v-else class="docbox empty"><div class="big">📄</div>本章尚未解析出原始文本</div>
+          <div class="muted" style="margin-top:8px;font-size:12px">原文仅作对照预览，不可编辑；修改请切回「朗读」页签。</div>
+        </div>
         <div class="editor-actions">
           <button class="btn btn-ghost btn-sm" @click="save">保存文本</button>
           <span class="kbd">Ctrl+S 思路：保存后重新合成分片才会更新</span>
@@ -182,6 +202,14 @@ function goTo(chId: string | null) {
 <style scoped>
 .wb{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px;align-items:start}
 .editor-panel{min-width:0}
+.tabs{display:inline-flex;background:#EDF2F0;border-radius:10px;padding:3px;gap:2px;margin-left:auto}
+.tab{padding:5px 12px;border-radius:8px;font-size:12px;color:var(--muted);font-weight:600;transition:.18s}
+.tab.active{background:#fff;color:var(--green-700);box-shadow:var(--shadow-sm)}
+.docbox{border:1px solid var(--line);border-radius:var(--r-md);height:460px;overflow:auto;padding:18px;background:#fff;line-height:1.9;font-size:14px}
+.docbox :deep(h1),.docbox :deep(h2),.docbox :deep(h3){margin:12px 0 6px;line-height:1.5}
+.docbox :deep(p){margin-bottom:10px}
+.docbox :deep(table){border-collapse:collapse;margin:10px 0}
+.docbox :deep(td),.docbox :deep(th){border:1px solid var(--line);padding:4px 8px}
 .editor-actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
 .right-col{display:flex;flex-direction:column;gap:14px}
 .kbd{color:var(--faint);font-size:12px}
