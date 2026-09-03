@@ -784,3 +784,31 @@ async def test_synthesize_concurrency_minus_one_override(data_dir):
         assert adapter.max_inflight >= 6
     finally:
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_mimo_engine_queues_sentence_level_requests(data_dir):
+    """mimo 每次请求只合成一句：滑动窗口的队列单元应为单个句子而非句组。"""
+    _make_book(data_dir, "b44")
+    ch = store.chapter_dir(data_dir, "b44", "ch-001")
+    (ch / "speech.md").write_text(
+        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(6)),
+        encoding="utf-8")
+    ss = SettingsStore(data_dir)
+    rs = ss.load()
+    rs.tts_engine = "mimo"
+    rs.tts_batch_size = 3  # mimo 忽略句组，仍应按句发起请求
+    ss.save(rs)
+
+    adapter = _RecordingBatchTTS()
+    jm = job_manager.JobManager(data_dir, ss, tts_factory=lambda rs, s: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b44", concurrency=2)
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        # 12 个语音单元（每句带长尾拆成两段）→ mimo 每单元一次请求
+        assert adapter.batch_calls == 12
+        assert (ch / "audio.wav").exists()
+    finally:
+        await jm.shutdown()

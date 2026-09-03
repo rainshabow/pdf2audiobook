@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 from openai import AsyncOpenAI
 
 from app import store
+from app.services.pool import run_windowed
 
 SYSTEM_PROMPT = """你是一名有声书口语化改写专家。任务：把书籍章节原文改写成适合语音朗读的口语化文本，保留全部信息。
 规则：
@@ -137,15 +138,11 @@ class Rewriter:
                 completed += 1
                 await on_progress(completed / total)
 
-        sem = asyncio.Semaphore(self._concurrency)
+        # 滑动窗口并发：固定数量 worker 消费分段队列，完成一个立即调度下一个
+        async def guarded(item: tuple[int, str]) -> None:
+            await process(item[0], item[1])
 
-        async def guarded(i: int, sec: str) -> None:
-            async with sem:
-                await process(i, sec)
-
-        tasks = [asyncio.create_task(guarded(i, sec)) for i, sec in enumerate(sections)]
-        if tasks:
-            await asyncio.gather(*tasks)
+        await run_windowed(enumerate(sections), self._concurrency, guarded)
         outputs = [r for r in results if r is not None]
         speech_path = ch_dir / "speech.md"
         if speech_path.exists():

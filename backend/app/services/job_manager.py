@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 from app import store
 from app.config import RuntimeSettings, SettingsStore, Settings
 from app.services import audio, pdf_extractor, rewriter, segmenter, tts_normalize
+from app.services.pool import run_windowed
 from app.services.tts.base import TTSAdapter
 from app.services.tts.mock import MockTTSAdapter
 from app.services.tts.qwen_webui import QwenWebUIAdapter
@@ -305,22 +306,24 @@ class JobManager:
             self._db.update_job(job_id or "",
                                 progress=(ch_idx + 1) / total)
         else:
-            # 合成并发：同一章节的缺失分片按批次并行提交，互不阻塞
-            batches = [missing[b:b + batch_size]
-                       for b in range(0, len(missing), batch_size)]
-            # 并发 >=1 用信号量限制同时在途请求；-1 = 不限并发（仅由适配器 RPM 限速）
-            sem = None if concurrency == -1 else asyncio.Semaphore(max(1, concurrency))
+            # 滑动窗口并发：固定数量 worker 消费“请求”队列，任一完成立即调度下一个；
+            # 并发 -1 = 不限窗口大小（仅由适配器 RPM 限速）。
+            # 队列单元 = 一次适配器请求：mimo 每次 HTTP 请求只合成一句 → 按句入队；
+            # qwen 支持 segment_gen 一次提交多句 → 保留该优化，按“批处理句数”入队。
+            unit_size = 1 if rs.tts_engine == "mimo" else max(1, batch_size)
+            units = [missing[b:b + unit_size]
+                     for b in range(0, len(missing), unit_size)]
             abort = asyncio.Event()
             errors: list[Exception] = []
             done_count = len(items) - len(missing)
             submitted = 0
 
-            async def _run_batch(group: list[tuple[int, dict]]) -> None:
+            async def _run_unit(unit: list[tuple[int, dict]]) -> None:
                 nonlocal done_count
                 await self._maybe_cancel(job_id)
                 if abort.is_set():
                     return
-                texts = [it["spoken"] for _, it in group]
+                texts = [it["spoken"] for _, it in unit]
                 try:
                     if ref_bytes is not None:
                         results = await adapter.synthesize_clone_batch(
@@ -339,38 +342,28 @@ class JobManager:
                     errors.append(exc)
                     abort.set()
                     return
-                if len(results) != len(group):
+                if len(results) != len(unit):
                     errors.append(RuntimeError(
-                        f"引擎返回音频数 {len(results)} != 请求数 {len(group)}"))
+                        f"引擎返回音频数 {len(results)} != 请求数 {len(unit)}"))
                     abort.set()
                     return
-                for (_, it), res in zip(group, results):
+                for (_, it), res in zip(unit, results):
                     it["path"].write_bytes(res.data)
                     it["duration"] = res.duration
-                done_count += len(group)
+                done_count += len(unit)
                 self._db.update_job(
                     job_id or "",
                     progress=(ch_idx + done_count / len(items)) / total)
 
-            async def _submit_batch(group: list[tuple[int, dict]]) -> None:
-                if sem is None:
-                    await _run_batch(group)
-                else:
-                    async with sem:
-                        await _run_batch(group)
-
-            tasks = []
-            for batch in batches:
+            def _on_submit(unit: list[tuple[int, dict]]) -> None:
+                nonlocal submitted
                 # 提交即按句数推进，避免长批次时进度卡在 0%
-                submitted += len(batch)
+                submitted += len(unit)
                 self._db.update_job(
                     job_id or "",
                     progress=(ch_idx + submitted / len(items)) / total)
-                tasks.append(asyncio.create_task(_submit_batch(batch)))
-            gathered = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in gathered:
-                if isinstance(res, _JobCancelled):
-                    raise res
+
+            await run_windowed(units, concurrency, _run_unit, on_submit=_on_submit)
             if errors:
                 raise errors[0]
         segments: list[dict] = []
