@@ -146,6 +146,36 @@ async def get_segments(request: Request, book_id: str, chapter_id: str):
     return store.load_json(path, [])
 
 
+@router.post("/{chapter_id}/segments/{index}/regenerate")
+async def regenerate_segment(request: Request, book_id: str, chapter_id: str,
+                             index: int):
+    """重新合成某一字幕句（1 起），并重建整章音频与字幕。"""
+    if index < 1:
+        raise HTTPException(400, "句子序号需 ≥1")
+    data_dir = _data_dir(request)
+    book_id = _validate_id(book_id)
+    chapter_id = _validate_id(chapter_id)
+    bdir = store.book_dir(data_dir, book_id)
+    if not bdir.exists():
+        raise HTTPException(404, "书籍不存在")
+    chapters = store.load_json(bdir / "chapters.json", {"chapters": []})["chapters"]
+    if not any(c["id"] == chapter_id for c in chapters):
+        raise HTTPException(404, "章节不存在")
+    from app.services.job_manager import RegenerateConflict
+    try:
+        return await request.app.state.job_manager.regenerate_segment(
+            book_id, chapter_id, index)
+    except RegenerateConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        # 引擎离线/云端错误等属于上游失败
+        raise HTTPException(502, f"单句重新生成失败: {exc}") from exc
+
+
 @router.get("/{chapter_id}/audio")
 async def get_audio(request: Request, book_id: str, chapter_id: str):
     data_dir = _data_dir(request)

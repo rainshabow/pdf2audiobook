@@ -2,11 +2,13 @@
 import { computed, ref, watch } from "vue";
 import { audioUrl, vttUrl } from "../api/client";
 
-const props = defineProps<{ bookId: string; chapterId: string }>();
+const props = defineProps<{ bookId: string; chapterId: string; version?: number }>();
 const emit = defineEmits<{ (e: "time", t: number): void }>();
 
-const src = computed(() => audioUrl(props.bookId, props.chapterId));
-const vtt = computed(() => vttUrl(props.bookId, props.chapterId));
+const src = computed(() =>
+  audioUrl(props.bookId, props.chapterId, props.version ?? 0));
+const vtt = computed(() =>
+  vttUrl(props.bookId, props.chapterId, props.version ?? 0));
 
 const audioEl = ref<HTMLAudioElement | null>(null);
 const playing = ref(false);

@@ -41,6 +41,7 @@ const playerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
 const activeMode = ref<"edit" | "follow">("edit");
 const segments = ref<api.Segment[]>([]);
 const currentTime = ref(0);
+const regeneratingIdx = ref<number | null>(null);
 const activeSegIdx = computed(() => {
   const t = currentTime.value;
   const i = segments.value.findIndex((seg) => t >= seg.start && t < seg.end);
@@ -52,6 +53,21 @@ function onPlayerTime(t: number) {
 }
 function seekSentence(start: number) {
   playerRef.value?.seekTo(start, true);
+}
+async function regenerateSentence(seg: api.Segment) {
+  if (regeneratingIdx.value !== null) return;
+  error.value = "";
+  regeneratingIdx.value = seg.index;
+  try {
+    segments.value = await api.regenerateSegment(
+      bookId.value, chapterId.value, seg.index);
+    audioVersion.value++; // 刷新播放器音频/字幕（含缓存版本号）
+    toast.show(`第 ${seg.index} 句已重新生成`);
+  } catch (e: any) {
+    error.value = "单句重新生成失败: " + (e?.response?.data?.detail ?? String(e));
+  } finally {
+    regeneratingIdx.value = null;
+  }
 }
 
 async function loadChapter() {
@@ -207,18 +223,26 @@ function goTo(chId: string | null) {
             <button class="tab" :class="{ active: activeMode === 'edit' }" @click="activeMode = 'edit'">编辑</button>
             <button class="tab" :class="{ active: activeMode === 'follow' }" @click="activeMode = 'follow'">跟读跳句</button>
           </span>
-          <span class="follow-tip" v-if="activeMode === 'follow'">点击句子即可跳转播放</span>
+          <span class="follow-tip" v-if="activeMode === 'follow'">点击句子跳转播放 · 点右侧 ↻ 可单独重新生成该句语音</span>
         </div>
         <div v-show="activeTab === 'speech' && activeMode === 'edit'">
           <ChapterEditor v-model="md" />
         </div>
         <div v-show="activeTab === 'speech' && activeMode === 'follow'" class="follow-box">
           <div v-if="segments.length" class="sent-list">
-            <button v-for="(seg, i) in segments" :key="seg.index" class="sent"
-                    :class="{ on: i === activeSegIdx }" @click="seekSentence(seg.start)">
-              <span class="si">{{ seg.index }}</span>
-              <span class="st">{{ seg.text }}</span>
-            </button>
+            <div v-for="(seg, i) in segments" :key="seg.index" class="sent-row">
+              <button class="sent" :class="{ on: i === activeSegIdx }"
+                      @click="seekSentence(seg.start)">
+                <span class="si">{{ seg.index }}</span>
+                <span class="st">{{ seg.text }}</span>
+              </button>
+              <button class="reg" type="button" :disabled="regeneratingIdx !== null"
+                      :title="regeneratingIdx === seg.index ? '正在重新生成…' : '重新生成该句语音'"
+                      @click="regenerateSentence(seg)">
+                <span v-if="regeneratingIdx === seg.index" class="spin">◌</span>
+                <span v-else>↻</span>
+              </button>
+            </div>
           </div>
           <div v-else class="docbox empty"><div class="big">🎧</div>本章尚未合成，暂无逐句字幕。先合成，再回来跟读跳句。</div>
           <div class="muted" style="margin-top:8px;font-size:12px">字幕来自合成时生成的独立 segments 文件；若修改过文本，请保存并重新合成以刷新字幕。</div>
@@ -238,7 +262,8 @@ function goTo(chId: string | null) {
         <div class="panel">
           <div class="panel-title">播放器</div>
           <AudioPlayer ref="playerRef" :key="audioVersion" :book-id="bookId"
-                       :chapter-id="chapterId" @time="onPlayerTime" />
+                       :chapter-id="chapterId" :version="audioVersion"
+                       @time="onPlayerTime" />
         </div>
 
         <div class="panel">
@@ -278,9 +303,15 @@ function goTo(chId: string | null) {
 .follow-tip{font-size:12px;color:var(--muted)}
 .follow-box{display:flex;flex-direction:column}
 .sent-list{height:460px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:#fff;padding:10px;display:flex;flex-direction:column;gap:4px}
-.sent{display:flex;gap:10px;text-align:left;padding:7px 10px;border-radius:9px;line-height:1.75;transition:.18s;border:1px solid transparent}
+.sent-row{display:flex;align-items:stretch;gap:6px}
+.sent{flex:1;min-width:0;display:flex;gap:10px;text-align:left;padding:7px 10px;border-radius:9px;line-height:1.75;transition:.18s;border:1px solid transparent}
 .sent:hover{background:var(--green-50)}
 .sent.on{background:var(--green-100);border-color:var(--green-200)}
+.reg{width:32px;flex:none;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--muted);cursor:pointer;display:grid;place-items:center;font-size:15px;transition:.18s}
+.reg:hover:not(:disabled){border-color:var(--green-300);color:var(--green-700);background:var(--green-50)}
+.reg:disabled{opacity:.55;cursor:default}
+.spin{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .sent.on .si{background:var(--green-600);color:#fff}
 .si{flex:none;width:22px;height:22px;border-radius:7px;background:#EDF2F0;color:var(--muted);font-size:11px;display:grid;place-items:center;font-weight:700;margin-top:4px;transition:.18s}
 .st{white-space:pre-wrap}

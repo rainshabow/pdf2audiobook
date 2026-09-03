@@ -78,6 +78,15 @@ export async function rewriteChapter(
 export async function getSegments(bookId: string, ch: string): Promise<Segment[]> {
   return (await api.get(`/books/${bookId}/chapters/${ch}/segments`)).data;
 }
+export async function regenerateSegment(
+  bookId: string, ch: string, index: number,
+): Promise<Segment[]> {
+  // 云端/本地首次加载可能较慢，放宽到 10 分钟
+  return (await api.post(
+    `/books/${bookId}/chapters/${ch}/segments/${index}/regenerate`,
+    null, { timeout: 600000 },
+  )).data;
+}
 export async function synthesizeChapter(
   bookId: string, ch: string, concurrency?: number,
 ): Promise<JobInfo> {
@@ -87,10 +96,10 @@ export async function synthesizeChapter(
 export async function restoreChapter(bookId: string, ch: string): Promise<void> {
   await api.post(`/books/${bookId}/chapters/${ch}/restore`);
 }
-export const audioUrl = (bookId: string, ch: string) =>
-  `/api/books/${bookId}/chapters/${ch}/audio`;
-export const vttUrl = (bookId: string, ch: string) =>
-  `/api/books/${bookId}/chapters/${ch}/chapter.vtt`;
+export const audioUrl = (bookId: string, ch: string, version = 0) =>
+  `/api/books/${bookId}/chapters/${ch}/audio${version ? `?v=${version}` : ""}`;
+export const vttUrl = (bookId: string, ch: string, version = 0) =>
+  `/api/books/${bookId}/chapters/${ch}/chapter.vtt${version ? `?v=${version}` : ""}`;
 export async function listJobs(): Promise<JobInfo[]> {
   return (await api.get("/jobs")).data;
 }

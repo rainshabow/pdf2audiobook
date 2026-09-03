@@ -375,7 +375,13 @@ class JobManager:
             segments.append({"index": it["idx"] + 1, "text": it["text"], "hash": it["hash"],
                              "start": round(cursor, 3), "end": round(cursor + duration, 3)})
             cursor += duration
-        # 只拼接当前 segments 引用的分片，避免改写 speech.md 后陈旧 parts 混入 audio.wav
+        self._write_chapter_audio(ch_dir, segments, rs)
+        return segments
+
+    def _write_chapter_audio(self, ch_dir: Path, segments: list[dict],
+                             rs: RuntimeSettings) -> None:
+        """按 segments 引用的分片重建 audio.wav/字幕并清理陈旧分片。"""
+        parts_dir = ch_dir / "parts"
         part_bytes = [(parts_dir / f"{s['index'] - 1:04d}_{s['hash']}.wav").read_bytes()
                       for s in segments]
         wav = audio.concat_wavs(part_bytes, self._data_dir / "tmp")
@@ -394,6 +400,61 @@ class JobManager:
         srt, vtt = audio.build_subtitles(segments)
         (ch_dir / "chapter.srt").write_text(srt, encoding="utf-8")
         (ch_dir / "chapter.vtt").write_text(vtt, encoding="utf-8")
+
+    async def regenerate_segment(self, book_id: str, chapter_id: str,
+                                 index: int) -> list[dict]:
+        """重新合成第 index 句（从 1 起），并重建整章音频与字幕时间轴。"""
+        if self._current_job_id.get("tts"):
+            raise RegenerateConflict(
+                "当前有语音合成任务正在运行，请等待其结束后再重新生成单句")
+        bdir = store.book_dir(self._data_dir, book_id)
+        ch_dir = store.chapter_dir(self._data_dir, book_id, chapter_id)
+        seg_path = ch_dir / "segments.json"
+        if not seg_path.exists():
+            raise FileNotFoundError("本章尚未合成，无逐句数据")
+        segments = store.load_json(seg_path, [])
+        seg = next((s for s in segments if s.get("index") == index), None)
+        if seg is None:
+            raise KeyError(f"句子不存在: {index}")
+        parts_dir = ch_dir / "parts"
+        parts_dir.mkdir(parents=True, exist_ok=True)
+        # 其余分片必须完整，否则整章时间轴已失效，应整章重新合成
+        for s in segments:
+            if not (parts_dir / f"{s['index'] - 1:04d}_{s['hash']}.wav").exists():
+                raise RegenerateConflict("本章分片不完整，请先整章重新合成")
+        rs = self._settings_store.load()
+        spoken = tts_normalize.normalize_for_tts(seg["text"])
+        h = audio.text_hash(spoken)
+        part_path = parts_dir / f"{index - 1:04d}_{h}.wav"
+        ref_bytes: bytes | None = None
+        if rs.tts_mode == "clone" and rs.tts_clone_ref_audio:
+            ref_path = self._data_dir / rs.tts_clone_ref_audio
+            if not ref_path.exists():
+                raise FileNotFoundError(f"克隆参考音频不存在: {ref_path}")
+            ref_bytes = ref_path.read_bytes()
+        adapter = self._tts_factory(rs, self._settings)
+        try:
+            if ref_bytes is not None:
+                res = await adapter.synthesize_clone(
+                    spoken, ref_audio=ref_bytes, ref_text=rs.tts_clone_ref_text)
+            else:
+                res = await adapter.synthesize(
+                    spoken, voice=rs.tts_speaker, instruct=rs.tts_instruct)
+        finally:
+            close = getattr(adapter, "aclose", None)
+            if close is not None:
+                await close()
+        part_path.write_bytes(res.data)
+        seg["hash"] = h
+        # 用每个分片的真实时长重排整章时间轴，再统一重建音频/字幕
+        cursor = 0.0
+        for s in segments:
+            part = parts_dir / f"{s['index'] - 1:04d}_{s['hash']}.wav"
+            duration = audio.wav_duration(part.read_bytes())
+            s["start"] = round(cursor, 3)
+            cursor += duration
+            s["end"] = round(cursor, 3)
+        self._write_chapter_audio(ch_dir, segments, rs)
         return segments
 
     # ---------- helpers ----------
@@ -431,6 +492,11 @@ class JobManager:
 
 
 class _JobCancelled(Exception):
+    pass
+
+
+class RegenerateConflict(RuntimeError):
+    """单句重新生成与当前状态冲突（合成任务在途 / 本章分片不完整）。"""
     pass
 
 

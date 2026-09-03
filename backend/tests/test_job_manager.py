@@ -812,3 +812,61 @@ async def test_mimo_engine_queues_sentence_level_requests(data_dir):
         assert (ch / "audio.wav").exists()
     finally:
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_segment_rebuilds_audio_and_subtitles(data_dir):
+    """单句重新生成：替换对应分片并重建整章音频/字幕/时间轴。"""
+    _make_book(data_dir, "b50")
+    ch = store.chapter_dir(data_dir, "b50", "ch-001")
+    (ch / "speech.md").write_text(
+        "第一句内容。\n\n第二句内容。\n\n第三句内容。", encoding="utf-8")
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b50")
+        job = await _wait_done(jm, jid)
+        assert job["status"] == "done", job
+        before = store.load_json(ch / "segments.json", [])
+        assert len(before) == 3
+
+        after = await jm.regenerate_segment("b50", "ch-001", 2)
+        assert len(after) == len(before)
+        assert after[1]["text"] == before[1]["text"]
+        assert after[1]["index"] == 2
+        # 时间轴按序且无重叠
+        for a, b in zip(after, after[1:]):
+            assert a["end"] <= b["start"]
+        assert (ch / "audio.wav").exists()
+        assert (ch / "chapter.srt").exists()
+        assert (ch / "chapter.vtt").exists()
+        # 字幕文件随新 segments 更新
+        srt = (ch / "chapter.srt").read_text(encoding="utf-8")
+        assert "第三句内容" in srt
+    finally:
+        await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_segment_without_segments_raises(data_dir):
+    _make_book(data_dir, "b51", with_speech=False)
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    with pytest.raises(FileNotFoundError):
+        await jm.regenerate_segment("b51", "ch-001", 1)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_segment_rejected_while_tts_job_running(data_dir):
+    """合成任务在途时禁止单句重生成，避免并发写坏音频文件。"""
+    _make_book(data_dir, "b52")
+    adapter = _BlockingTTS()
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir),
+                                tts_factory=lambda rs, settings: adapter)
+    jm.start_worker()
+    try:
+        jid = jm.start("synthesize", "b52")
+        await asyncio.wait_for(adapter.started.wait(), timeout=5)
+        with pytest.raises(RuntimeError, match="正在运行"):
+            await jm.regenerate_segment("b52", "ch-001", 1)
+    finally:
+        await jm.shutdown()

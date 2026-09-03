@@ -543,3 +543,46 @@ async def test_load_tts_model_endpoint(client):
     r = await client.post("/api/tts/load")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_regenerate_segment_endpoint(client, tmp_path):
+    """单句重生成接口：替换后返回新 segments 并重建音频。"""
+    r = await client.post("/api/books", files={
+        "file": ("book.pdf", _tiny_pdf_bytes(), "application/pdf")})
+    book = r.json()
+    jid = (await client.post(f"/api/books/{book['book_id']}/parse")).json()["id"]
+    await _wait(client, jid)
+    detail = (await client.get(f"/api/books/{book['book_id']}")).json()
+    ch = detail["chapters"][0]["id"]
+    await client.put(
+        f"/api/books/{book['book_id']}/chapters/{ch}/speech.md",
+        content="第一句内容。\n\n第二句内容。\n\n第三句内容。",
+        headers={"Content-Type": "text/plain"})
+    jid = (await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/synthesize")).json()["id"]
+    await _wait(client, jid)
+
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/segments/2/regenerate")
+    assert r.status_code == 200
+    segs = r.json()
+    assert len(segs) == 3
+    assert segs[1]["index"] == 2
+    ch_dir = store.chapter_dir(tmp_path, book["book_id"], ch)
+    assert (ch_dir / "audio.wav").exists()
+    r = await client.get(
+        f"/api/books/{book['book_id']}/chapters/{ch}/audio")
+    assert r.status_code == 200
+
+    # 非法序号
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/segments/0/regenerate")
+    assert r.status_code == 400
+    r = await client.post(
+        f"/api/books/{book['book_id']}/chapters/{ch}/segments/99/regenerate")
+    assert r.status_code == 404
+    # 未解析/未知书籍
+    r = await client.post(
+        "/api/books/nonexistent/chapters/ch-001/segments/1/regenerate")
+    assert r.status_code == 404
