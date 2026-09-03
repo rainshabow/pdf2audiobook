@@ -12,6 +12,9 @@ export interface BookDetail extends Book {
   chapters: ChapterInfo[];
   toc: Array<{ level: number; title: string; page: number }>;
 }
+export interface Segment {
+  index: number; text: string; start: number; end: number; hash: string;
+}
 export interface JobInfo {
   id: string; book_id: string; chapter_id: string | null; type: string;
   status: string; progress: number; error: string | null;
@@ -71,6 +74,9 @@ export async function rewriteChapter(
 ): Promise<JobInfo> {
   const params = concurrency !== undefined ? { concurrency } : undefined;
   return (await api.post(`/books/${bookId}/chapters/${ch}/rewrite`, null, { params })).data;
+}
+export async function getSegments(bookId: string, ch: string): Promise<Segment[]> {
+  return (await api.get(`/books/${bookId}/chapters/${ch}/segments`)).data;
 }
 export async function synthesizeChapter(
   bookId: string, ch: string, concurrency?: number,

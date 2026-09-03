@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { audioUrl, vttUrl } from "../api/client";
 
 const props = defineProps<{ bookId: string; chapterId: string }>();
+const emit = defineEmits<{ (e: "time", t: number): void }>();
 
 const src = computed(() => audioUrl(props.bookId, props.chapterId));
 const vtt = computed(() => vttUrl(props.bookId, props.chapterId));
@@ -67,6 +68,7 @@ function onTime() {
   if (!el) return;
   currentTime.value = el.currentTime;
   syncCue(el.currentTime);
+  emit("time", el.currentTime);
 }
 function onMeta() {
   const el = audioEl.value;
@@ -77,9 +79,15 @@ function seek(e: Event) {
   const el = audioEl.value;
   if (!el) return;
   const v = Number((e.target as HTMLInputElement).value);
-  el.currentTime = v;
-  currentTime.value = v;
-  syncCue(v);
+  seekTo(v);
+}
+function seekTo(t: number, autoplay = false) {
+  const el = audioEl.value;
+  if (!el) return;
+  el.currentTime = t;
+  currentTime.value = t;
+  syncCue(t);
+  if (autoplay) void el.play();
 }
 function toggle() {
   const el = audioEl.value;
@@ -90,6 +98,8 @@ function onRate(e: Event) {
   rate.value = Number((e.target as HTMLSelectElement).value);
   if (audioEl.value) audioEl.value.playbackRate = rate.value;
 }
+defineExpose({ seekTo });
+
 watch(src, () => {
   currentTime.value = 0;
   duration.value = 0;

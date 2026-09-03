@@ -135,9 +135,13 @@ async def test_synthesize_job_writes_audio_and_subtitles(data_dir):
         assert (ch / "chapter.srt").exists()
         assert (ch / "chapter.vtt").exists()
         segs = store.load_json(ch / "segments.json", [])
-        assert len(segs) == 2
+        # 句子级切分：每段 = “首句 + 无句读长尾”两个语音单元
+        assert len(segs) == 4
         assert segs[1]["start"] >= segs[0]["end"]
         assert audio.wav_duration((ch / "audio.wav").read_bytes()) > 0
+        # 独立字幕文件逐句标注起止
+        srt = (ch / "chapter.srt").read_text(encoding="utf-8")
+        assert "00:00:00" in srt and "-->" in srt
     finally:
         await jm.shutdown()
 
@@ -547,7 +551,7 @@ async def test_synthesize_uses_batches(data_dir):
     _make_book(data_dir, "b30")
     ch = store.chapter_dir(data_dir, "b30", "ch-001")
     (ch / "speech.md").write_text(
-        "\n\n".join(f"第{i}句内容。" + "长" * 480 for i in range(5)), encoding="utf-8")
+        "\n\n".join(f"第{i}句内容" + "长" * 480 for i in range(5)), encoding="utf-8")
     ss = SettingsStore(data_dir)
     rs = ss.load()
     rs.tts_batch_size = 2
@@ -593,8 +597,9 @@ async def test_synthesize_normalizes_spoken_text_but_keeps_subtitles(data_dir):
 
         # 送 TTS 的是归一化后的朗读文本
         flat = [t for batch in adapter.submitted_texts for t in batch]
-        assert any("L L M" in t and "I D" in t and "V L L M" in t for t in flat)
-        assert not any("LLM" in t or "ID" in t or "vLLM" in t for t in flat)
+        spoken_all = "\n".join(flat)
+        assert "L L M" in spoken_all and "I D" in spoken_all and "V L L M" in spoken_all
+        assert "LLM" not in spoken_all and "ID" not in spoken_all and "vLLM" not in spoken_all
     finally:
         await jm.shutdown()
 

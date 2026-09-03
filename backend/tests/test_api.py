@@ -407,6 +407,13 @@ async def test_synthesize_chapter_endpoint(client, tmp_path):
     await _wait(client, job["id"])
     ch_dir = store.chapter_dir(tmp_path, book["book_id"], ch)
     assert (ch_dir / "audio.wav").exists()
+    # 逐句字幕接口：两句 → 两个带起止时间的字幕条
+    r = await client.get(f"/api/books/{book['book_id']}/chapters/{ch}/segments")
+    assert r.status_code == 200
+    segs = r.json()
+    assert len(segs) == 2
+    assert segs[0]["text"] == "第一句。"
+    assert segs[1]["start"] >= segs[0]["end"] > 0
     # 未知章节 404
     r = await client.post(f"/api/books/{book['book_id']}/chapters/ch-999/synthesize")
     assert r.status_code == 404

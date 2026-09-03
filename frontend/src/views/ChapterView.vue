@@ -35,6 +35,23 @@ const chapter = computed(() => (books.detail?.chapters ?? [])[chapterIndex.value
 const chapterTitle = computed(() => chapter.value?.title ?? chapterId.value);
 const sourceHtml = computed(() => sourceMd.value ? (marked.parse(sourceMd.value) as string) : "");
 
+const playerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
+const activeMode = ref<"edit" | "follow">("edit");
+const segments = ref<api.Segment[]>([]);
+const currentTime = ref(0);
+const activeSegIdx = computed(() => {
+  const t = currentTime.value;
+  const i = segments.value.findIndex((seg) => t >= seg.start && t < seg.end);
+  return i;
+});
+
+function onPlayerTime(t: number) {
+  currentTime.value = t;
+}
+function seekSentence(start: number) {
+  playerRef.value?.seekTo(start, true);
+}
+
 async function loadChapter() {
   const bId = route.params.bookId as string;
   const cId = route.params.chapterId as string;
@@ -42,11 +59,14 @@ async function loadChapter() {
   chapterId.value = cId;
   audioVersion.value++;
   activeTab.value = "speech";
+  activeMode.value = "edit";
   saved.value = false;
   isSource.value = false;
   error.value = "";
   md.value = "";
   sourceMd.value = null;
+  segments.value = [];
+  currentTime.value = 0;
   try {
     if (books.detail?.book_id !== bId) await books.loadBook(bId);
     md.value = await api.getSpeechMd(bId, cId);
@@ -59,6 +79,9 @@ async function loadChapter() {
     try {
       sourceMd.value = await api.getSourceMd(bId, cId);
     } catch { sourceMd.value = null; }
+    try {
+      segments.value = await api.getSegments(bId, cId);
+    } catch { segments.value = []; }
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? String(e);
   }
@@ -165,8 +188,26 @@ function goTo(chId: string | null) {
             <button class="tab" :class="{ active: activeTab === 'source' }" @click="activeTab = 'source'">原文</button>
           </span>
         </div>
-        <div v-show="activeTab === 'speech'">
+        <div v-if="activeTab === 'speech'" class="subbar">
+          <span class="mode-tabs">
+            <button class="tab" :class="{ active: activeMode === 'edit' }" @click="activeMode = 'edit'">编辑</button>
+            <button class="tab" :class="{ active: activeMode === 'follow' }" @click="activeMode = 'follow'">跟读跳句</button>
+          </span>
+          <span class="follow-tip" v-if="activeMode === 'follow'">点击句子即可跳转播放</span>
+        </div>
+        <div v-show="activeTab === 'speech' && activeMode === 'edit'">
           <ChapterEditor v-model="md" />
+        </div>
+        <div v-show="activeTab === 'speech' && activeMode === 'follow'" class="follow-box">
+          <div v-if="segments.length" class="sent-list">
+            <button v-for="(seg, i) in segments" :key="seg.index" class="sent"
+                    :class="{ on: i === activeSegIdx }" @click="seekSentence(seg.start)">
+              <span class="si">{{ seg.index }}</span>
+              <span class="st">{{ seg.text }}</span>
+            </button>
+          </div>
+          <div v-else class="docbox empty"><div class="big">🎧</div>本章尚未合成，暂无逐句字幕。先合成，再回来跟读跳句。</div>
+          <div class="muted" style="margin-top:8px;font-size:12px">字幕来自合成时生成的独立 segments 文件；若修改过文本，请保存并重新合成以刷新字幕。</div>
         </div>
         <div v-show="activeTab === 'source'">
           <div v-if="sourceMd" class="docbox" v-html="sourceHtml"></div>
@@ -182,7 +223,8 @@ function goTo(chId: string | null) {
       <div class="right-col">
         <div class="panel">
           <div class="panel-title">播放器</div>
-          <AudioPlayer :key="audioVersion" :book-id="bookId" :chapter-id="chapterId" />
+          <AudioPlayer ref="playerRef" :key="audioVersion" :book-id="bookId"
+                       :chapter-id="chapterId" @time="onPlayerTime" />
         </div>
 
         <div class="panel">
@@ -217,6 +259,17 @@ function goTo(chId: string | null) {
 .tabs{display:inline-flex;background:#EDF2F0;border-radius:10px;padding:3px;gap:2px;margin-left:auto}
 .tab{padding:5px 12px;border-radius:8px;font-size:12px;color:var(--muted);font-weight:600;transition:.18s}
 .tab.active{background:#fff;color:var(--green-700);box-shadow:var(--shadow-sm)}
+.subbar{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.mode-tabs{display:inline-flex;background:#EDF2F0;border-radius:10px;padding:3px;gap:2px}
+.follow-tip{font-size:12px;color:var(--muted)}
+.follow-box{display:flex;flex-direction:column}
+.sent-list{height:460px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:#fff;padding:10px;display:flex;flex-direction:column;gap:4px}
+.sent{display:flex;gap:10px;text-align:left;padding:7px 10px;border-radius:9px;line-height:1.75;transition:.18s;border:1px solid transparent}
+.sent:hover{background:var(--green-50)}
+.sent.on{background:var(--green-100);border-color:var(--green-200)}
+.sent.on .si{background:var(--green-600);color:#fff}
+.si{flex:none;width:22px;height:22px;border-radius:7px;background:#EDF2F0;color:var(--muted);font-size:11px;display:grid;place-items:center;font-weight:700;margin-top:4px;transition:.18s}
+.st{white-space:pre-wrap}
 .docbox{border:1px solid var(--line);border-radius:var(--r-md);height:460px;overflow:auto;padding:18px;background:#fff;line-height:1.9;font-size:14px}
 .docbox :deep(h1),.docbox :deep(h2),.docbox :deep(h3){margin:12px 0 6px;line-height:1.5}
 .docbox :deep(p){margin-bottom:10px}

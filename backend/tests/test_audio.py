@@ -22,6 +22,15 @@ def _wav(duration: float, rate: int = 24000) -> bytes:
     return buf.getvalue()
 
 
+def test_split_utterances_sentence_level():
+    assert audio.split_utterances("第一句。第二句！第三句？\n\n新段。") == [
+        "第一句。", "第二句！", "第三句？", "新段。"]
+    # 无句读的独立行保留为单个语音单元（标题/列表）
+    assert audio.split_utterances("第一章\nLLM 架构与优化") == ["第一章", "LLM 架构与优化"]
+    assert audio.split_utterances("") == []
+    assert audio.split_utterances("   ") == []
+
+
 def test_wav_duration():
     assert abs(audio.wav_duration(_wav(2.0)) - 2.0) < 0.01
 

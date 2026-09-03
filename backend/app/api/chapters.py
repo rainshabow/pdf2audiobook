@@ -132,6 +132,18 @@ async def rebuild_chapter(request: Request, book_id: str, chapter_id: str,
     return JobInfo(**jm.get_job(jid))
 
 
+@router.get("/{chapter_id}/segments")
+async def get_segments(request: Request, book_id: str, chapter_id: str):
+    """返回逐句字幕数据（text/start/end），供前端跟随高亮与点击跳句。"""
+    data_dir = _data_dir(request)
+    book_id = _validate_id(book_id)
+    chapter_id = _validate_id(chapter_id)
+    path = store.chapter_dir(data_dir, book_id, chapter_id) / "segments.json"
+    if not path.exists():
+        raise HTTPException(404, "本章尚未合成，无字幕数据")
+    return store.load_json(path, [])
+
+
 @router.get("/{chapter_id}/audio")
 async def get_audio(request: Request, book_id: str, chapter_id: str):
     data_dir = _data_dir(request)

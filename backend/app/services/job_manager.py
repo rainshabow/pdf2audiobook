@@ -269,7 +269,8 @@ class JobManager:
                                   job_id: str | None = None,
                                   concurrency: int = 1) -> list[dict]:
         text = speech_path.read_text(encoding="utf-8")
-        parts = audio.split_speech_text(text, max_chars=500)
+        # 句子级切分：每个 TTS 单元对应一个字幕句，可获得精确的句级起止时间
+        parts = audio.split_utterances(text)
         if not parts:
             raise ValueError("本章无内容可合成")
         parts_dir = ch_dir / "parts"

@@ -77,6 +77,31 @@ def build_subtitles(segments: list[dict]) -> tuple[str, str]:
     return srt, vtt
 
 
+def split_utterances(text: str) -> list[str]:
+    """把朗读文本切成“句子级”语音单元（每句一个字幕条）。
+
+    - 按空行分段落，避免跨段粘连；
+    - 段落内按中文句读（。！？；）与英文句点（后随空白/结尾）切句；
+    - 无句读的独立行（如标题行、列表项）按换行保留为一个单元。
+    返回去除首尾空白、非空的单元列表。
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    out: list[str] = []
+    for para in re.split(r"\n[ \t]*\n", text):
+        para = para.strip()
+        if not para:
+            continue
+        pieces = re.split(
+            r"(?<=[。！？；])\s*|(?<=[.!?])(?=\s|$)|\n+",
+            para,
+        )
+        for piece in pieces:
+            piece = piece.strip()
+            if piece:
+                out.append(piece)
+    return out
+
+
 def split_speech_text(text: str, max_chars: int = 500) -> list[str]:
     blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
     out: list[str] = []
