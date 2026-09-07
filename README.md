@@ -9,8 +9,8 @@
 
 ## 快速开始
 1. `cp .env.example .env`，填入 `OPENAI_API_KEY`（opencode deepseek-v4-flash）；如需统一数据目录，可加 `DATA_DIR=D:\绝对路径\data`（默认是启动目录下的 `data/`）
-2. 后端：`cd backend && python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8000`
-3. 前端：`cd frontend && npm install && npm run dev`，浏览器打开 `http://localhost:5173`
+2. 后端：`cd backend && python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8980`
+3. 前端：`cd frontend && npm install && npm run dev`，浏览器打开 `http://localhost:5456`
 4. 上传 PDF → 解析章节 → 口语化改写 → 合成语音
 
 

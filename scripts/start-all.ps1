@@ -59,8 +59,8 @@ function Start-Service($Port, $Label, $Proc) {
 
 if ($Stop) {
     if ($Qwen)    { Stop-Port 7860 'qwen-tts-webui' }
-    if ($Backend) { Stop-Port 8000 'backend' }
-    if ($Frontend){ Stop-Port 5173 'frontend' }
+    if ($Backend) { Stop-Port 8980 'backend' }
+    if ($Frontend){ Stop-Port 5456 'frontend' }
     Write-Host '已停止。'
     exit 0
 }
@@ -84,15 +84,15 @@ if ($Backend) {
         $script:Backend = $false
     }
     if ($Backend) {
-        Start-Service 8000 'backend' @{
+        Start-Service 8980 'backend' @{
             FilePath = $py
-            ArgumentList = @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000')
+            ArgumentList = @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8980')
             WorkingDirectory = Join-Path $Root 'backend'
         }
     }
 }
 if ($Frontend) {
-    Start-Service 5173 'frontend' @{
+    Start-Service 5456 'frontend' @{
         FilePath = 'npm.cmd'
         ArgumentList = @('run','dev')
         WorkingDirectory = Join-Path $Root 'frontend'
@@ -101,8 +101,8 @@ if ($Frontend) {
 
 Write-Host ''
 Write-Host '访问地址:'
-Write-Host '  前端   http://localhost:5173'
-Write-Host '  后端   http://127.0.0.1:8000/docs'
+Write-Host '  前端   http://localhost:5456'
+Write-Host '  后端   http://127.0.0.1:8980/docs'
 Write-Host '  TTS    http://127.0.0.1:7860/qwenapi/v1/'
 Write-Host ('日志目录: ' + $Logs)
 Write-Host '停止: .\scripts\start-all.ps1 -Stop'

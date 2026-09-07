@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     tts_speed: float = 1.25
     tts_instruct: str | None = "用平稳、一致的叙述语气朗读，情绪保持中性稳定，前后句语气连贯。"
     backend_host: str = "127.0.0.1"
-    backend_port: int = 8000
+    backend_port: int = 8980
     data_dir: Path = Path("data")
 
     model_config = SettingsConfigDict(
