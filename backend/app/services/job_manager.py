@@ -94,6 +94,33 @@ class JobManager:
     def list_jobs(self) -> list[dict]:
         return self._db.list_jobs()
 
+    def resume(self, job_id: str) -> str:
+        """为失败/已取消的任务创建续跑任务（沿用原任务设置快照，从断点继续）。
+
+        - rewrite：按段缓存（rewrite_checkpoint）跳过已完成分段
+        - synthesize/rebuild：按分片文件（parts/{idx}_{hash}.wav）跳过已合成句子
+        """
+        job = self._db.get_job(job_id)
+        if job is None:
+            raise KeyError(f"任务不存在: {job_id}")
+        if job["status"] not in ("failed", "cancelled"):
+            raise ValueError(f"仅失败或已取消的任务可续跑（当前状态：{job['status']}）")
+        if job["type"] not in ("rewrite", "synthesize", "rebuild"):
+            raise ValueError(f"任务类型 {job['type']} 不支持断点续跑")
+        try:
+            snap = json.loads(job.get("settings_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        if not isinstance(snap, dict) or not snap:
+            snap = _rs_to_dict(self._settings_store.load())
+        new_id = store.new_book_id()
+        self._db.create_job(new_id, job["book_id"], job["chapter_id"], job["type"],
+                            json.dumps(snap, ensure_ascii=False))
+        queue = self._queue_tts if self._lane(job["type"]) == "tts" else self._queue_llm
+        queue.put_nowait((new_id, job["type"], job["book_id"], job["chapter_id"]))
+        self._queued.add(new_id)
+        return new_id
+
     def cancel(self, job_id: str) -> None:
         job = self._db.get_job(job_id)
         if job is None or job["status"] in ("done", "failed", "cancelled"):

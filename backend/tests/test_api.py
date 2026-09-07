@@ -586,3 +586,32 @@ async def test_regenerate_segment_endpoint(client, tmp_path):
     r = await client.post(
         "/api/books/nonexistent/chapters/ch-001/segments/1/regenerate")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resume_job_endpoint(client, tmp_path):
+    """失败任务续跑接口：创建续跑任务并返回；非法状态 409 / 未知 404。"""
+    from app import store as _store
+    jm = client.app.state.job_manager
+    snap = json.dumps({"tts_engine": "mock", "tts_concurrency": 2, "tts_rpm": 80})
+    failed_id = _store.new_book_id()
+    jm._db.create_job(failed_id, "some-book", "ch-001", "synthesize", snap)
+    jm._db.update_job(failed_id, status="failed", error="ReadTimeout")
+
+    r = await client.post(f"/api/jobs/{failed_id}/resume")
+    assert r.status_code == 200
+    job = r.json()
+    assert job["type"] == "synthesize"
+    assert job["status"] == "pending"
+    assert job["chapter_id"] == "ch-001"
+    assert json.loads(jm.get_job(job["id"])["settings_snapshot"]) == json.loads(snap)
+
+    # 已完成任务不可续跑
+    done_id = _store.new_book_id()
+    jm._db.create_job(done_id, "some-book", None, "synthesize", "{}")
+    jm._db.update_job(done_id, status="done")
+    r = await client.post(f"/api/jobs/{done_id}/resume")
+    assert r.status_code == 409
+    # 未知任务
+    r = await client.post("/api/jobs/not-exist/resume")
+    assert r.status_code == 404

@@ -870,3 +870,38 @@ async def test_regenerate_segment_rejected_while_tts_job_running(data_dir):
             await jm.regenerate_segment("b52", "ch-001", 1)
     finally:
         await jm.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_resume_failed_synthesis_job_keeps_snapshot_and_queues(data_dir):
+    """失败任务的续跑：新建任务沿用原快照并进入队列（底层按分片跳过已完成句）。"""
+    _make_book(data_dir, "b60")
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    snap = json.dumps({"tts_engine": "mimo", "tts_concurrency": -1,
+                       "tts_rpm": 60, "tts_batch_size": 3})
+    old_id = store.new_book_id()
+    jm._db.create_job(old_id, "b60", "ch-001", "synthesize", snap)
+    jm._db.update_job(old_id, status="failed", progress=0.68,
+                      error="ReadTimeout")
+
+    new_id = jm.resume(old_id)
+    nj = jm.get_job(new_id)
+    assert nj is not None
+    assert nj["type"] == "synthesize"
+    assert nj["book_id"] == "b60"
+    assert nj["chapter_id"] == "ch-001"
+    assert nj["status"] == "pending"
+    assert json.loads(nj["settings_snapshot"]) == json.loads(snap)
+    assert new_id in jm._queued
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_done_or_unknown_job(data_dir):
+    jm = job_manager.JobManager(data_dir, SettingsStore(data_dir))
+    done_id = store.new_book_id()
+    jm._db.create_job(done_id, "b60", None, "synthesize", "{}")
+    jm._db.update_job(done_id, status="done")
+    with pytest.raises(ValueError, match="仅失败或已取消"):
+        jm.resume(done_id)
+    with pytest.raises(KeyError, match="任务不存在"):
+        jm.resume("no-such-job")

@@ -1,11 +1,33 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useJobsStore } from "../stores/jobs";
+import { useToastStore } from "../stores/toast";
 import type { JobInfo } from "../api/client";
 
 const jobs = useJobsStore();
 const router = useRouter();
+const toast = useToastStore();
+const resumingId = ref<string | null>(null);
+
+const resumableTypes = ["rewrite", "synthesize", "rebuild"];
+function resumable(j: JobInfo) {
+  return ["failed", "cancelled"].includes(j.status) && resumableTypes.includes(j.type);
+}
+async function resume(j: JobInfo) {
+  if (resumingId.value !== null) return;
+  resumingId.value = j.id;
+  try {
+    const nj = await jobs.resume(j.id);
+    toast.show(`${j.type === "rewrite" ? "改写" : "合成"}续跑任务已创建，将从断点继续`);
+    if (nj.chapter_id) router.push(`/books/${nj.book_id}/chapters/${nj.chapter_id}`);
+    else router.push(`/books/${nj.book_id}`);
+  } catch (e: any) {
+    toast.show("续跑失败: " + (e?.response?.data?.detail ?? String(e)), false);
+  } finally {
+    resumingId.value = null;
+  }
+}
 
 const typeText: Record<string, string> = { parse: "解析", rewrite: "改写", synthesize: "合成", rebuild: "重建" };
 const typeCls: Record<string, string> = { parse: "parse", rewrite: "rewrite", synthesize: "synth", rebuild: "synth" };
@@ -59,6 +81,12 @@ function go(j: JobInfo) {
             <div class="job-sub err" v-if="j.error">{{ j.error }}</div>
             <div class="job-sub" v-else>完成于 {{ new Date(j.updated_at).toLocaleString() }}</div>
           </div>
+          <div v-if="resumable(j)" class="job-right" @click.stop>
+            <button class="btn btn-soft btn-sm" :disabled="resumingId !== null"
+                    @click="resume(j)">
+              {{ resumingId === j.id ? "创建中…" : "续跑" }}
+            </button>
+          </div>
           <span class="job-arrow">→</span>
         </div>
       </div>
@@ -76,6 +104,7 @@ function go(j: JobInfo) {
 .job-type{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;flex:none}
 .job-type.parse{background:#94A3B8}.job-type.rewrite{background:var(--green-500)}.job-type.synth{background:var(--green-700)}
 .job-main{flex:1;min-width:0}
+.job-card.history .job-right{margin-left:auto}
 .job-title{font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .job-sub{color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
 .job-right{display:flex;align-items:center;gap:12px}

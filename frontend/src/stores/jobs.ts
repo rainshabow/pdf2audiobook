@@ -26,5 +26,10 @@ export const useJobsStore = defineStore("jobs", () => {
     await api.cancelJob(id);
     await refresh();
   }
-  return { jobs, active, refresh, startPolling, cancel };
+  async function resume(id: string) {
+    const job = await api.resumeJob(id);
+    await refresh();
+    return job;
+  }
+  return { jobs, active, refresh, startPolling, cancel, resume };
 });

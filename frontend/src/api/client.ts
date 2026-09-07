@@ -106,6 +106,9 @@ export async function listJobs(): Promise<JobInfo[]> {
 export async function cancelJob(id: string): Promise<void> {
   await api.post(`/jobs/${id}/cancel`);
 }
+export async function resumeJob(id: string): Promise<JobInfo> {
+  return (await api.post(`/jobs/${id}/resume`)).data;
+}
 export async function getSettings(): Promise<SettingsView> {
   return (await api.get("/settings")).data;
 }
